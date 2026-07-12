@@ -1,6 +1,13 @@
 // Vercel cron job — runs every 5 minutes.
-// Marks devices OFFLINE if lastSeen > 10 minutes ago.
+// Marks devices OFFLINE if lastSeen > 20 minutes ago.
 // Updates 30-day rolling uptime estimate (uptimePctD30).
+//
+// The player's heartbeat is a WorkManager PeriodicWorkRequest, which Android
+// silently clamps to a 15-minute minimum interval regardless of what's
+// requested — so under normal operation lastSeen can legitimately go ~15 min
+// between updates, plus scheduling jitter (Doze, deferred network
+// constraints). A 10-minute offline threshold flapped healthy devices
+// OFFLINE routinely; 20 minutes gives enough headroom above the real cadence.
 //
 // GET /api/cron/device-health
 // Auth: CRON_SECRET (Vercel sets Authorization: Bearer <secret>)
@@ -13,7 +20,7 @@ import { recordError, hashStack, getOrCreateCorrelationId } from '@/lib/telemetr
 const UPTIME_DROP_THRESHOLD_PCT = 15;
 const OFFLINE_TRANSITION_THRESHOLD = 3;
 const MISSING_HEARTBEAT_WINDOWS_THRESHOLD = 3;
-const HEARTBEAT_WINDOW_MS = 10 * 60 * 1000;
+const HEARTBEAT_WINDOW_MS = 20 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') ?? '';
@@ -22,7 +29,7 @@ export async function GET(req: NextRequest) {
   }
 
   const now           = new Date();
-  const offlineThresh = new Date(now.getTime() - 10 * 60 * 1000);   // 10 min
+  const offlineThresh = new Date(now.getTime() - 20 * 60 * 1000);   // 20 min
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   try {
