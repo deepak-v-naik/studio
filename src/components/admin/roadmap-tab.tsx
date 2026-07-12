@@ -3,6 +3,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Copy, CheckCircle2, MessageSquare, Zap, ChevronDown, ChevronUp, Map as MapIcon, List as ListIcon, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { getDevices, type Device } from '@/lib/backend-api';
+
+// Karnataka ELEVATE T1 grant deliverable: this many screens, each reliably
+// online with proof-of-play actually flowing, not just provisioned.
+const GRANT_TARGET_SCREENS = 10;
+const GRANT_MIN_UPTIME_PCT = 80;
+const GRANT_POP_WINDOW_MS = 24 * 60 * 60 * 1000; // proof-of-play seen in the last 24h
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -564,32 +571,14 @@ Task: [DESCRIBE YOUR CHANGE — e.g. "Add device fleet health to the check: retu
   {
     id: 'job-health-cron', cluster: 'Background Jobs', label: 'Device Health Cron', sub: 'Offline detect → tickets',
     status: 'built', path: 'src/app/api/cron/device-health/route.ts',
-    description: 'Runs every 5 min via Vercel cron. Marks devices OFFLINE if lastSeen > 10 min. Creates RemediationTicket. Should auto-call notifyAdminWA and trigger /api/agent/remediate — both are pending wiring.',
-    notes: ['Cron secret auth: CRON_SECRET env var', 'WhatsApp alert: notifyAdminWA() in src/lib/notify.ts — exists, NOT YET WIRED', 'Auto-remediate: /api/agent/remediate exists — NOT YET AUTO-TRIGGERED'],
-    claudePrompt: `Context: Device health cron at src/app/api/cron/device-health/route.ts. Marks devices OFFLINE if lastSeen > 10 min. Creates RemediationTicket in DB. Two things are NOT YET wired:
-1. notifyAdminWA() from src/lib/notify.ts should be called after ticket creation
-2. Non-blocking fetch to /api/agent/remediate with ticketId should auto-trigger AI proposals
-
-Task: Wire both integrations.
-
-## Exact changes needed in src/app/api/cron/device-health/route.ts:
-
-After the \`db.remediationTicket.create(...)\` call succeeds, add:
-\`\`\`ts
-// 1. WhatsApp alert
-await notifyAdminWA(\`Device \${device.storeName} (ID: \${device.id}) offline for \${minutesOffline} min. Ticket: \${ticket.id}\`)
-  .catch(() => {}); // non-blocking
-
-// 2. Auto-trigger AI remediation proposal
-fetch(\`\${process.env.NEXTAUTH_URL ?? ''}/api/agent/remediate\`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'admin-password': process.env.ADMIN_PASSWORD ?? '' },
-  body: JSON.stringify({ ticketId: ticket.id }),
-}).catch(() {}); // fire and forget
-\`\`\`
-
-Also import notifyAdminWA from '@/lib/notify'.
-Also add recordError() in the outer catch block from '@/lib/telemetry'.`,
+    description: 'Runs every 5 min via Vercel cron. Marks devices OFFLINE if lastSeen > 20 min. Creates RemediationTicket and fires notifyAdminWA + /api/agent/remediate — both are fully wired.',
+    notes: [
+      'Field-trial audit (pre-ELEVATE-T1) found vercel.json had no `crons` array at all — this route had never actually been invoked by Vercel in production, despite being fully implemented. Fixed: registered at */5 * * * *.',
+      'Same audit raised the offline threshold from 10 to 20 min (here, plus /api/devices and /api/devices/groups) — the player heartbeat is a WorkManager PeriodicWorkRequest, which Android clamps to a real 15-min floor regardless of the interval requested, so 10 min was flapping healthy devices OFFLINE.',
+      'Cron secret auth: CRON_SECRET env var',
+      'WhatsApp alert: notifyAdminWA() fires on ticket creation',
+      'Auto-remediate: fire-and-forget POST to /api/agent/remediate with ticketId',
+    ],
   },
   {
     id: 'job-context-sync', cluster: 'Background Jobs', label: 'Context Sync Cron', sub: 'Platform state for AI',
@@ -733,6 +722,11 @@ For new cron jobs, add to vercel.json:
 }
 \`\`\`
 Cron endpoint must check CRON_SECRET header for auth.`,
+  },
+  {
+    id: 'infra-internal-api-auth', cluster: 'Data & Infra', label: 'Internal API Auth Sweep', sub: 'Every data-bearing route now requires admin-password',
+    status: 'built', critical: true,
+    description: 'Field-trial audit found /api/query (campaign emails, payment IDs, bill totals, store payout status, external-signal aggregates via a DSL) and /api/context/search (semantic search over internal ContextDocument rows) had no authentication at all — the only two data-bearing routes in the whole API surface missing the admin-password guard every other admin route already has. Both fixed.',
   },
 
   // ── Android Player ───────────────────────────────────────────────────────────
@@ -1154,6 +1148,32 @@ Check for updates in SyncManager.sync() once every 24 hours.`,
     notes: ['AppDatabase version bumped to 3 — fallbackToDestructiveMigration handles upgrade', 'getPending(): WHERE uploaded=0 AND fail_count<3 LIMIT 50', 'incrementFailCount(eventIds): UPDATE SET fail_count=fail_count+1'],
   },
   {
+    id: 'player-pop-retry-fix', cluster: 'Android Player', label: 'POP Upload Retry Fix', sub: 'Stopped silently dropping proof-of-play after 5 retries',
+    status: 'built', critical: true,
+    description: 'Field-trial audit (pre-ELEVATE-T1) found PopUploadWorker returned Result.success() after 5 failed WorkManager retries — a terminal state, so events sat uploaded=0 forever with no further retry once the retry window elapsed. Any outage longer than a few minutes meant permanent proof-of-play loss. Now transient failures (network, 5xx, timeouts, auth, rate-limit) always return Result.retry(); only a genuine 4xx payload rejection counts toward the existing failCount quarantine.',
+    notes: [
+      'Also fixed a double-application of the NTP clock offset: PlaybackEngine already records timestamps via NtpSyncManager.now() (pre-corrected), but the uploader was adding prefs.getClockOffsetMs() again before sending — skewing every reported startedAt/endedAt.',
+      'Now drains the full offline backlog (up to 10k events, 200 batches of 50) in one worker run instead of one batch of 50 per run, so a multi-day outage clears in a single reconnect.',
+      'Quarantined (server-rejected) rows are dropped after 30 days so the local table can\'t grow unbounded.',
+    ],
+  },
+  {
+    id: 'player-heartbeat-cadence-fix', cluster: 'Android Player', label: 'Heartbeat Cadence Fix', sub: 'WorkManager clamps periodic work to 15 min, not 1',
+    status: 'built', critical: true,
+    description: 'HeartbeatScheduler requested a 1-minute PeriodicWorkRequest, but Android silently clamps periodic work to a hard 15-minute floor — no error, no log, the real cadence was always 15 min. Requesting the true interval avoids a misleading reader; the server-side offline threshold (job-health-cron) was raised to 20 min to match.',
+  },
+  {
+    id: 'player-download-job-fix', cluster: 'Android Player', label: 'Release Build Was Broken', sub: 'DownloadJobDao queried a nonexistent column',
+    status: 'built', critical: true,
+    description: 'DownloadJobDao.totalBytesSum() ran SELECT SUM(size_bytes) FROM download_jobs, but DownloadJob never had a size_bytes column — that field only existed on the unrelated Asset entity. Room\'s KSP query verifier fails the whole build on this, so kspReleaseKotlin — and therefore assembleRelease — could not succeed at all from a clean checkout. Added size_bytes to DownloadJob, populated as soon as the download\'s Content-Length is known, so the download-progress corner in PlaybackActivity gets a real total instead of a broken build.',
+  },
+  {
+    id: 'player-crash-handler', cluster: 'Android Player', label: 'Global Crash Handler', sub: 'AliveApplication + uncaught exception logging',
+    status: 'built', critical: true,
+    description: 'There was no Application subclass and no Thread.setDefaultUncaughtExceptionHandler anywhere. Being registered as the system HOME app means Android eventually relaunches the player after a crash, but the default path can be slow on some OEM TV builds and left zero trace of why the screen went dark. AliveApplication now logs an Incident row locally (type=UNCAUGHT_EXCEPTION, stack trace) and force-exits immediately so the OS\'s HOME-relaunch fires right away.',
+    notes: ['Lighter-weight than the WatchdogService still described below (player-watchdog, still planned) — that entry is a bigger foreground-service redesign; this is the minimal fix for the immediate gap.', 'Incident rows are still local-only — nothing uploads or displays them yet; SettingsFragment\'s "reset device" action just clears the table alongside everything else.'],
+  },
+  {
     id: 'player-screen-off', cluster: 'Android Player', label: 'Screen-Off POP Pause', sub: 'Suspend POP emission when HDMI-CEC turns off display',
     status: 'planned',
     description: 'Register BroadcastReceiver for ACTION_SCREEN_OFF and ACTION_SCREEN_ON. While screen is off: stop emitting ProofEvents (no proof of play on a dark screen), pause ExoPlayer to save resources. Resume on ACTION_SCREEN_ON.',
@@ -1524,6 +1544,16 @@ export default function RoadmapTab() {
   const graphRef = useRef<HTMLDivElement>(null);
   const dragRef  = useRef({ dragging: false, startX: 0, startY: 0, moved: false, panStart: { x: 0, y: 0 } });
 
+  // Grant milestone tracker — live fleet data, separate from the static ITEMS map above.
+  const [pairedDevices, setPairedDevices]   = useState<Device[] | null>(null);
+  const [devicesEver, setDevicesEver]       = useState<Device[] | null>(null);
+
+  useEffect(() => {
+    Promise.all([getDevices(), getDevices({ all: 'true' })])
+      .then(([paired, all]) => { setPairedDevices(paired.devices); setDevicesEver(all.devices); })
+      .catch(() => { setPairedDevices([]); setDevicesEver([]); });
+  }, []);
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem(NOTES_KEY);
@@ -1727,8 +1757,50 @@ export default function RoadmapTab() {
   const visibleItems = filter === 'all' ? ITEMS : ITEMS.filter(i => i.status === filter);
   const clusters     = CLUSTER_ORDER.filter(c => visibleItems.some(i => i.cluster === c));
 
+  // Grant milestone: screens that are paired, meeting the uptime bar, AND actually
+  // producing proof-of-play recently — not just "online" at this instant.
+  const milestoneLoading = pairedDevices === null || devicesEver === null;
+  const provisionedCount = devicesEver?.length ?? 0;
+  const pairedCount      = pairedDevices?.length ?? 0;
+  const onlineNowCount    = pairedDevices?.filter(d => d.status === 'ONLINE').length ?? 0;
+  const reliableCount     = pairedDevices?.filter(d =>
+    (d.uptimePct ?? 0) >= GRANT_MIN_UPTIME_PCT &&
+    d.lastPlayAt != null &&
+    Date.now() - new Date(d.lastPlayAt).getTime() < GRANT_POP_WINDOW_MS
+  ).length ?? 0;
+  const milestonePct = Math.min(100, Math.round((reliableCount / GRANT_TARGET_SCREENS) * 100));
+
   return (
     <div className="space-y-5">
+
+      {/* Grant milestone tracker */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center gap-3 mb-1">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground shrink-0">Karnataka ELEVATE T1 — Grant Milestone</span>
+          <div className="flex-1 h-1.5 rounded-full bg-border overflow-hidden">
+            <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${milestoneLoading ? 0 : milestonePct}%` }} />
+          </div>
+          <span className="text-xs font-bold text-primary shrink-0">
+            {milestoneLoading ? '—' : `${reliableCount} / ${GRANT_TARGET_SCREENS}`}
+          </span>
+        </div>
+        <p className="text-[11px] text-muted-foreground mb-3">
+          Reliable = paired · ≥{GRANT_MIN_UPTIME_PCT}% 30-day uptime · proof-of-play in the last 24h
+        </p>
+        <div className="admin-summary-row" style={{ marginBottom: 0 }}>
+          {[
+            { label: 'Provisioned', value: milestoneLoading ? '—' : String(provisionedCount) },
+            { label: 'Paired',      value: milestoneLoading ? '—' : String(pairedCount) },
+            { label: 'Online now',  value: milestoneLoading ? '—' : String(onlineNowCount) },
+            { label: 'Grant-ready', value: milestoneLoading ? '—' : String(reliableCount) },
+          ].map((s) => (
+            <div key={s.label} className="admin-summary-tile">
+              <div className="admin-summary-tile__label">{s.label}</div>
+              <div className="admin-summary-tile__value" style={{ fontSize: 22 }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Top bar */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
