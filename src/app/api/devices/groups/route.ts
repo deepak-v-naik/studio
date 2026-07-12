@@ -9,7 +9,8 @@ function adminGuard(req: NextRequest) {
   return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
 }
 
-const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000;
+// Kept in sync with /api/devices and the device-health cron — see comment there.
+const OFFLINE_THRESHOLD_MS = 20 * 60 * 1000;
 
 function effectiveStatus(lastSeen: Date | null, dbStatus: string) {
   if (dbStatus === 'PENDING' && !lastSeen) return 'PENDING';

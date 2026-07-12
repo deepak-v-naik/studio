@@ -7,7 +7,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 
-const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000;
+// Player heartbeat is a WorkManager PeriodicWorkRequest, clamped to a 15-min
+// floor by Android regardless of the requested interval — 20 min matches the
+// same threshold used by the device-health cron so this list and that cron
+// agree on what "online" means.
+const OFFLINE_THRESHOLD_MS = 20 * 60 * 1000;
 const DEFAULT_TAKE = 50;
 
 function adminGuard(req: NextRequest) {
