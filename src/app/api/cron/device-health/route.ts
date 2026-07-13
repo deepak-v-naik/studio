@@ -1,4 +1,10 @@
-// Vercel cron job — runs every 5 minutes.
+// Runs every 5 minutes via .github/workflows/device-health-cron.yml (GitHub
+// Actions), which POSTs a bearer-authed GET here on schedule. The
+// `crons` entry in vercel.json only fires this once a day (0 3 * * *) as a
+// fallback in case the GitHub Actions schedule ever stalls — Vercel's Hobby
+// plan rejects any cron expression that runs more than once a day, so the
+// real 5-minute cadence has to live outside vercel.json.
+//
 // Marks devices OFFLINE if lastSeen > 20 minutes ago.
 // Updates 30-day rolling uptime estimate (uptimePctD30).
 //
@@ -10,7 +16,9 @@
 // OFFLINE routinely; 20 minutes gives enough headroom above the real cadence.
 //
 // GET /api/cron/device-health
-// Auth: CRON_SECRET (Vercel sets Authorization: Bearer <secret>)
+// Auth: CRON_SECRET (Vercel sets Authorization: Bearer <secret> for its own
+// daily fallback call; the GitHub Actions workflow sets the same header from
+// a repo secret of the same name)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';

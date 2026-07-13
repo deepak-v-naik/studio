@@ -2,6 +2,6 @@
   "buildCommand": "npm run build",
   "framework": "nextjs",
   "crons": [
-    { "path": "/api/cron/device-health", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/device-health", "schedule": "0 3 * * *" }
   ]
 }
