@@ -1,25 +1,18 @@
 // GET  /api/stores/offers  — list my store's offers
 // POST /api/stores/offers  — create an offer
-// Auth: store session required
+// Auth: storeId (mobile app) or store session (web dashboard) — see resolveStoreId
 
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { withApiHandler } from '@/lib/with-api-handler';
+import { resolveStoreId } from '@/lib/store-partner-auth';
 
-async function getStore(userId: string) {
-  return db.store.findUnique({ where: { userId } });
-}
-
-export const GET = withApiHandler('/api/stores/offers', 'user', async () => {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const store = await getStore(session.user.id);
-  if (!store) return NextResponse.json({ error: 'Store not found' }, { status: 404 });
+export const GET = withApiHandler('/api/stores/offers', 'user', async (req: NextRequest) => {
+  const storeId = await resolveStoreId(req.nextUrl.searchParams.get('storeId'));
+  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const offers = await db.storeOffer.findMany({
-    where:   { storeId: store.id, active: true },
+    where:   { storeId, active: true },
     orderBy: { createdAt: 'desc' },
     include: { product: { select: { imageUrl: true, id: true } } },
   });
@@ -34,16 +27,13 @@ export const GET = withApiHandler('/api/stores/offers', 'user', async () => {
 });
 
 export const POST = withApiHandler('/api/stores/offers', 'user', async (req: NextRequest) => {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const store = await getStore(session.user.id);
-  if (!store) return NextResponse.json({ error: 'Store not found' }, { status: 404 });
-
-  const { productName, weight, mrp, offerPrice, validUntil, productId } = await req.json() as {
+  const { productName, weight, mrp, offerPrice, validUntil, productId, storeId: bodyStoreId } = await req.json() as {
     productName: string; weight?: string; productId?: string;
-    mrp: number; offerPrice: number; validUntil?: string;
+    mrp: number; offerPrice: number; validUntil?: string; storeId?: string;
   };
+
+  const storeId = await resolveStoreId(bodyStoreId);
+  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   if (!productName?.trim()) return NextResponse.json({ error: 'Product name required' }, { status: 400 });
   if (!mrp || !offerPrice)  return NextResponse.json({ error: 'MRP and offer price required' }, { status: 400 });
@@ -51,7 +41,7 @@ export const POST = withApiHandler('/api/stores/offers', 'user', async (req: Nex
 
   const offer = await db.storeOffer.create({
     data: {
-      storeId:     store.id,
+      storeId,
       productName: productName.trim(),
       weight:      weight?.trim() || null,
       mrp:         Math.round(mrp),

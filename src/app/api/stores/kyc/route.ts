@@ -3,12 +3,12 @@
 // POST  — submit uploaded doc URLs + Aadhaar last 4 digits for admin review
 
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { resolveStoreId } from '@/lib/store-partner-auth';
 
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export async function GET(req: NextRequest) {
+  const storeId = await resolveStoreId(req.nextUrl.searchParams.get('storeId'));
+  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const rows = await db.$queryRaw<{
     kycStatus: string | null; kycPanUrl: string | null; kycAadhaarUrl: string | null;
@@ -17,7 +17,7 @@ export async function GET() {
   }[]>`
     SELECT "kycStatus", "kycPanUrl", "kycAadhaarUrl", "kycSelfieUrl",
            "kycAadhaarLast4", "kycSubmittedAt", "kycVerifiedAt", "kycRejectedReason"
-    FROM "Store" WHERE "userId" = ${session.user.id} LIMIT 1
+    FROM "Store" WHERE "id" = ${storeId} LIMIT 1
   `.catch(() => []);
 
   const r = rows[0];
@@ -34,12 +34,13 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   const body = await req.json() as {
+    storeId?: string;
     panUrl?: string; aadhaarUrl?: string; selfieUrl?: string; aadhaarLast4?: string;
   };
+
+  const storeId = await resolveStoreId(body.storeId);
+  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   if (!body.panUrl || !body.aadhaarUrl || !body.selfieUrl) {
     return NextResponse.json({ error: 'PAN, Aadhaar and selfie are all required.' }, { status: 400 });
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
         "kycSubmittedAt"   = NOW(),
         "kycRejectedReason" = NULL,
         "updatedAt"        = NOW()
-    WHERE "userId" = ${session.user.id}
+    WHERE "id" = ${storeId}
   `;
 
   return NextResponse.json({ ok: true });

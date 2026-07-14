@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { resolveStoreId } from '@/lib/store-partner-auth';
 
 // Base columns guaranteed from init migration — no optional columns here
 type StoreRow = {
@@ -11,9 +11,9 @@ type StoreRow = {
   agreedAt: Date | null; createdAt: Date; updatedAt: Date;
 };
 
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export async function GET(req: NextRequest) {
+  const storeId = await resolveStoreId(req.nextUrl.searchParams.get('storeId'));
+  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
     // Select only base columns that exist in the init migration.
@@ -27,7 +27,7 @@ export async function GET() {
         u."email", u."phone"
       FROM "Store" s
       LEFT JOIN "User" u ON u."id" = s."userId"
-      WHERE s."userId" = ${session.user.id}
+      WHERE s."id" = ${storeId}
       LIMIT 1
     `;
 
@@ -41,7 +41,7 @@ export async function GET() {
     let monthlyCompensationPaise = 50000;
     try {
       const extra = await db.$queryRaw<{ liveAt: Date | null; onboardingStage: string | null; tier: string | null; monthlyCompensationPaise: number | null }[]>`
-        SELECT "liveAt", "onboardingStage", "tier", "monthlyCompensationPaise" FROM "Store" WHERE "userId" = ${session.user.id} LIMIT 1
+        SELECT "liveAt", "onboardingStage", "tier", "monthlyCompensationPaise" FROM "Store" WHERE "id" = ${storeId} LIMIT 1
       `;
       const v = extra[0]?.liveAt;
       liveAt = v instanceof Date ? v.toISOString() : (v ?? null);
@@ -92,8 +92,8 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const storeId = await resolveStoreId(req.nextUrl.searchParams.get('storeId'));
+  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
     const body = await req.json() as {
@@ -104,7 +104,8 @@ export async function PATCH(req: NextRequest) {
 
     if (body.email !== undefined) {
       if (!body.email?.includes('@')) return NextResponse.json({ error: 'Invalid email' }, { status: 400 });
-      await db.user.update({ where: { id: session.user.id }, data: { email: body.email } });
+      const store = await db.store.findUnique({ where: { id: storeId }, select: { userId: true } });
+      if (store) await db.user.update({ where: { id: store.userId }, data: { email: body.email } });
     }
 
     // Payout fields — try raw UPDATE, silently ignore if columns don't exist yet
@@ -120,7 +121,7 @@ export async function PATCH(req: NextRequest) {
             "bankIfsc"        = ${body.bankIfsc        || null},
             "bankName"        = ${body.bankName        || null},
             "updatedAt"       = NOW()
-          WHERE "userId" = ${session.user.id}
+          WHERE "id" = ${storeId}
         `;
       } catch {
         // Payout columns may not exist yet — non-fatal, user data saved client-side
