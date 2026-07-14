@@ -38,6 +38,14 @@ whoever is on call — assume no prior context beyond this doc.
      regardless of what's requested. Expect up to ~20-25 minutes of lag between an
      actual outage and the admin console reflecting it. This is a platform floor, not
      a bug to chase further.
+   - **Infra note:** Vercel's Hobby plan only allows a once-a-day cron, so the real
+     5-minute schedule lives in `.github/workflows/device-health-cron.yml` (GitHub
+     Actions), which calls the same endpoint with a `CRON_SECRET` repo secret.
+     `vercel.json`'s cron entry only runs once a day as a fallback. If offline
+     detection seems stuck (no OFFLINE flips for hours despite a known outage), check
+     the Actions tab for failed/disabled runs first — GitHub can pause scheduled
+     workflows after long periods of repo inactivity, and it doesn't guarantee exact
+     timing under load.
 2. **Check for an open remediation ticket.** The cron auto-creates one
    (`RemediationTicket`, visible via the alerts/roadmap tooling) when a device misses
    3 heartbeat windows, has repeated offline transitions, or its 30-day uptime drops

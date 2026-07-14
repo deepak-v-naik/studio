@@ -777,49 +777,13 @@ class BootReceiver : BroadcastReceiver() {
   },
   {
     id: 'player-watchdog', cluster: 'Android Player', label: 'WatchdogService', sub: 'Crash detect + auto restart',
-    status: 'planned', critical: true,
-    description: 'Android foreground service that monitors player health and auto-restarts on crash. Runs independently of the main playback activity.',
-    notes: ['Use Android foreground service with persistent notification (required post-Android 8)', 'AlarmManager for periodic health checks every 60 seconds', 'Restart strategy: 3 retries with exponential backoff, then reboot if all fail'],
-    claudePrompt: `Context: ALIVE Player needs a watchdog service so if the playback activity crashes, it restarts automatically. This is a foreground Android service.
-
-Task: Build WatchdogService.kt
-
-\`\`\`kotlin
-class WatchdogService : Service() {
-  private val handler = Handler(Looper.getMainLooper())
-  private var restartAttempts = 0
-
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    startForeground(NOTIF_ID, buildNotification())
-    scheduleHealthCheck()
-    return START_STICKY // auto-restart if killed
-  }
-
-  private fun scheduleHealthCheck() {
-    handler.postDelayed({
-      if (!isPlayerRunning()) restartPlayer()
-      scheduleHealthCheck()
-    }, 60_000L)
-  }
-
-  private fun isPlayerRunning(): Boolean {
-    val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-    return am.runningAppProcesses?.any { it.processName == packageName } == true
-  }
-
-  private fun restartPlayer() {
-    if (++restartAttempts > 3) { restartAttempts = 0; reboot() }
-    val intent = Intent(this, PlayerActivity::class.java).apply {
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-    }
-    startActivity(intent)
-  }
-
-  override fun onBind(intent: Intent?) = null
-}
-\`\`\`
-
-Start WatchdogService from PlayerActivity.onCreate() and from BootReceiver.`,
+    status: 'built', critical: true,
+    description: 'WatchdogService now exists, running in its own OS process (android:process=":watchdog") rather than same-process as originally speculated — that distinction matters: it stays responsive even if the main process fully freezes. Checks a heartbeat-timestamp file every 20s; if stale 90s+, kills the main process (safe — sibling processes of the same app share one Linux UID) and restarts it via startForegroundService.',
+    notes: [
+      'Superseded the original same-process foreground-service + AlarmManager design below in favor of a genuinely separate process — see player-watchdog-xproc for the mechanism.',
+      'BootReceiver and PlaybackForegroundService.onCreate() both call WatchdogService.ensureRunning() — either one coming up brings the other with it.',
+      'Requires foregroundServiceType="specialUse" on API 34+ (targetSdk 35 rejects an untyped foreground service at runtime) — verified via lintVitalRelease.',
+    ],
   },
   {
     id: 'player-ntp', cluster: 'Android Player', label: 'NTPSyncManager', sub: 'Clock accuracy for POP timestamps',
@@ -1171,7 +1135,13 @@ Check for updates in SyncManager.sync() once every 24 hours.`,
     id: 'player-crash-handler', cluster: 'Android Player', label: 'Global Crash Handler', sub: 'AliveApplication + uncaught exception logging',
     status: 'built', critical: true,
     description: 'There was no Application subclass and no Thread.setDefaultUncaughtExceptionHandler anywhere. Being registered as the system HOME app means Android eventually relaunches the player after a crash, but the default path can be slow on some OEM TV builds and left zero trace of why the screen went dark. AliveApplication now logs an Incident row locally (type=UNCAUGHT_EXCEPTION, stack trace) and force-exits immediately so the OS\'s HOME-relaunch fires right away.',
-    notes: ['Lighter-weight than the WatchdogService still described below (player-watchdog, still planned) — that entry is a bigger foreground-service redesign; this is the minimal fix for the immediate gap.', 'Incident rows are still local-only — nothing uploads or displays them yet; SettingsFragment\'s "reset device" action just clears the table alongside everything else.'],
+    notes: ['Complements the cross-process WatchdogService (player-watchdog / player-watchdog-xproc, since built) — that one recovers from a frozen main thread by killing and restarting the process; this one catches the crash case and gets a record of it before the process dies.', 'Incident rows are still local-only — nothing uploads or displays them yet; SettingsFragment\'s "reset device" action just clears the table alongside everything else.'],
+  },
+  {
+    id: 'player-doze-exemption', cluster: 'Android Player', label: 'Battery Optimization Exemption', sub: 'One-time Doze/App Standby whitelist request during pairing',
+    status: 'built', critical: true,
+    description: 'No Doze/App Standby exemption existed anywhere — OemAutostartHelper\'s own comment even claimed "the device-owner battery-optimization exemption covers it," but no code actually requested one. Over a multi-week unattended deployment, aggressive OEM Doze policies can throttle the foreground service, WorkManager jobs, and the watchdog\'s check cadence. PairingActivity.showSuccess() now fires ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS at the same moment it already prompts for OEM autostart permission, while setup staff still has the remote in hand.',
+    notes: ['Safe to call on every pairing — no-op once granted, since isIgnoringBatteryOptimizations already reflects that state.', 'Did not attempt a fully silent Device-Owner-only bypass API — couldn\'t verify one with certainty without on-device testing, and an unverified DevicePolicyManager call on a production kiosk fleet is worse than one confirmed physical tap during setup.'],
   },
   {
     id: 'player-screen-off', cluster: 'Android Player', label: 'Screen-Off POP Pause', sub: 'Suspend POP emission when HDMI-CEC turns off display',
@@ -1280,16 +1250,19 @@ private fun matchRefreshRate(contentFps: Float) {
 Call matchRefreshRate() in renderItem() for video items, using item's declared fps (add fps field to PlanItem, default 30.0f).`,
   },
   {
-    id: 'player-watchdog-xproc', cluster: 'Android Player', label: 'Cross-Process Watchdog', sub: 'Broadcast heartbeat from playback to watchdog service',
-    status: 'planned',
-    description: 'PlaybackEngine sends a LocalBroadcast heartbeat every 15 seconds. WatchdogService listens; if no heartbeat for 60 seconds, it restarts the playback activity. This catches ANRs and frozen activity states that don\'t crash but stop media.',
-    notes: ['Use LocalBroadcastManager for intra-process, or explicit broadcast with permission for cross-process', 'Heartbeat intent action: com.alive.player.HEARTBEAT', 'WatchdogService: AlarmManager.setRepeating every 60s to check last heartbeat timestamp'],
+    id: 'player-watchdog-xproc', cluster: 'Android Player', label: 'Cross-Process Watchdog', sub: 'Heartbeat file, not broadcast — main-thread freezes can\'t block a file write',
+    status: 'built',
+    description: 'Built with a plain heartbeat file (ProcessHeartbeat.kt) instead of the originally speculated LocalBroadcast: a broadcast send still has to originate from a thread in the potentially-frozen main process, whereas a background coroutine writing a file keeps working even if the main Looper is wedged. PlaybackForegroundService writes the file every 10s from Dispatchers.IO; WatchdogService (separate process) checks every 20s and force-restarts the main process if the file goes stale 90s+.',
+    notes: ['This is the same underlying capability as player-watchdog above — one implementation satisfies both roadmap entries.', 'Catches true ANRs (frozen main thread), which PlaybackWatchdog (same-process, Handler-based) cannot detect since it would freeze along with the thing it\'s watching.'],
   },
   {
-    id: 'player-input-intercept', cluster: 'Android Player', label: 'Kiosk Input Hardening', sub: 'Intercept home/back/recents on Fire TV',
-    status: 'planned',
-    description: 'Override dispatchKeyEvent in PlaybackActivity to consume Home, Back, Menu, and Search keys so accidental remote presses don\'t exit the player. ALIVE Player is a kiosk — users should not be able to navigate away.',
-    notes: ['dispatchKeyEvent: consume KEYCODE_HOME, KEYCODE_BACK, KEYCODE_MENU, KEYCODE_SEARCH', 'Admin unlock: triple-press Select within 2 seconds to allow exit (maintenance mode)', 'Test with Fire TV Stick remote — d-pad and select keys vary by model'],
+    id: 'player-input-intercept', cluster: 'Android Player', label: 'Kiosk Input Hardening', sub: 'Intercept back/home/menu/search/recents in PlaybackActivity',
+    status: 'built',
+    description: 'dispatchKeyEvent override in PlaybackActivity swallows KEYCODE_BACK, KEYCODE_HOME, KEYCODE_MENU, KEYCODE_SEARCH, and KEYCODE_APP_SWITCH. Triple-press Select (KEYCODE_DPAD_CENTER/ENTER) within 2s opens Settings — the maintenance escape hatch, matching the original spec.',
+    notes: [
+      'KEYCODE_HOME is swallowed for defense-in-depth but this is NOT a reliable block: on a normal (non-lock-task) foreground app, Android routes HOME to the system launcher before dispatchKeyEvent ever sees it. Being the persistent HOME app (OwnerSetup) brings the player back quickly, but a moment of home-screen exposure is possible.',
+      'Fully preventing HOME exposure needs startLockTask() + setLockTaskPackages() via DevicePolicyManager — a separate, larger change, not built yet.',
+    ],
   },
   {
     id: 'player-firmware-resilience', cluster: 'Android Player', label: 'Firmware Update Resilience', sub: 'Re-register hardwareKey if device identity changes',

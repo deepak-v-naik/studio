@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
 import { C } from '../../lib/colors';
 import { loadSession, saveSession } from '../../lib/storage';
 import { getStoreMe, type StoreSession } from '../../lib/api';
@@ -57,7 +58,6 @@ export default function Overview() {
   };
 
   const copyCode = async () => {
-    const Clipboard = await import('expo-clipboard');
     await Clipboard.setStringAsync(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
