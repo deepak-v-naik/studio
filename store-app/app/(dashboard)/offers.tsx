@@ -83,7 +83,7 @@ export default function Offers() {
         text: 'Delete', style: 'destructive', onPress: async () => {
           setDeleting(id);
           try {
-            await fetch(`${BASE}/api/stores/offers/${id}`, { method: 'DELETE' });
+            await fetch(`${BASE}/api/stores/offers/${id}?storeId=${storeId ?? ''}`, { method: 'DELETE' });
             setOffers((prev) => prev.filter((o) => o.id !== id));
           } catch { /* ignore */ } finally { setDeleting(null); }
         },

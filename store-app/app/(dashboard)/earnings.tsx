@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../../lib/colors';
 import { loadSession } from '../../lib/storage';
 import type { StoreSession } from '../../lib/api';
+import { API_BASE_URL } from '@shared/constants';
 
 type PaymentRecord = {
   month: string; status: string; amountPaise: number; paidAt: string | null; payRef: string | null;
@@ -37,7 +38,7 @@ export default function Earnings() {
     loadSession().then(async (s) => {
       setStore(s);
       try {
-        const res = await fetch('https://wearealive.in/api/stores/payments');
+        const res = await fetch(`${API_BASE_URL}/api/stores/payments?storeId=${s?.id ?? ''}`);
         if (res.ok) setRecords(await res.json() as PaymentRecord[]);
       } catch { /* no records */ }
       setLoading(false);
@@ -77,10 +78,10 @@ export default function Earnings() {
     if (!claimModal) return;
     setClaimBusy(true); setClaimErr('');
     try {
-      const res = await fetch('https://wearealive.in/api/payout-claim', {
+      const res = await fetch(`${API_BASE_URL}/api/payout-claim`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month: claimModal.monthKey, amountPaise: claimModal.amountPaise }),
+        body: JSON.stringify({ storeId: store.id, month: claimModal.monthKey, amountPaise: claimModal.amountPaise }),
       });
       if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error); }
       setClaimDone(true);

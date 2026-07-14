@@ -7,10 +7,18 @@ import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../../lib/colors';
 import { loadSession } from '../../lib/storage';
-
-const BASE = 'https://wearealive.in';
+import { API_BASE_URL } from '@shared/constants';
 
 type DocType = 'pan' | 'aadhaar' | 'selfie';
+type KycStatus = 'not_started' | 'submitted' | 'approved' | 'rejected';
+
+type KycData = {
+  status: KycStatus;
+  panUrl: string | null;
+  aadhaarUrl: string | null;
+  selfieUrl: string | null;
+  rejectedReason: string | null;
+};
 
 const DOCS: { key: DocType; label: string; hint: string; icon: string }[] = [
   { key: 'pan',     label: 'PAN card',          hint: 'Photo of your PAN card (front)',               icon: 'card-outline' },
@@ -20,47 +28,61 @@ const DOCS: { key: DocType; label: string; hint: string; icon: string }[] = [
 
 export default function KYC() {
   const [storeId, setStoreId] = useState<string | undefined>();
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<KycStatus>('not_started');
+  const [rejectedReason, setRejectedReason] = useState<string | null>(null);
   const [uploads, setUploads] = useState<Partial<Record<DocType, string>>>({});
   const [uploading, setUploading] = useState<DocType | null>(null);
-  const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    loadSession().then((s) => setStoreId(s?.id));
+    loadSession().then(async (s) => {
+      setStoreId(s?.id);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/stores/kyc?storeId=${s?.id ?? ''}`);
+        if (res.ok) {
+          const d = await res.json() as KycData;
+          setStatus(d.status);
+          setRejectedReason(d.rejectedReason);
+          setUploads({
+            pan:     d.panUrl     ?? undefined,
+            aadhaar: d.aadhaarUrl ?? undefined,
+            selfie:  d.selfieUrl  ?? undefined,
+          });
+        }
+      } catch { /* start from empty state */ }
+      setLoading(false);
+    });
   }, []);
 
   const pick = async (doc: DocType) => {
     if (doc === 'selfie') {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') { Alert.alert('Permission required', 'Camera access needed for selfie.'); return; }
-      const res = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.7 });
+      const { status: permStatus } = await ImagePicker.requestCameraPermissionsAsync();
+      if (permStatus !== 'granted') { Alert.alert('Permission required', 'Camera access needed for selfie.'); return; }
+      const res = await ImagePicker.launchCameraAsync({ quality: 0.7 });
       if (res.canceled || !res.assets[0]) return;
-      await upload(doc, res.assets[0].base64 ?? '', res.assets[0].mimeType ?? 'image/jpeg');
+      await upload(doc, res.assets[0].uri, res.assets[0].mimeType ?? 'image/jpeg');
     } else {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') { Alert.alert('Permission required', 'Gallery access needed.'); return; }
-      const res = await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.8, mediaTypes: ImagePicker.MediaTypeOptions.Images });
+      const { status: permStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permStatus !== 'granted') { Alert.alert('Permission required', 'Gallery access needed.'); return; }
+      const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.8, mediaTypes: ImagePicker.MediaTypeOptions.Images });
       if (res.canceled || !res.assets[0]) return;
-      await upload(doc, res.assets[0].base64 ?? '', res.assets[0].mimeType ?? 'image/jpeg');
+      await upload(doc, res.assets[0].uri, res.assets[0].mimeType ?? 'image/jpeg');
     }
   };
 
-  const upload = async (doc: DocType, base64: string, mimeType: string) => {
+  const upload = async (doc: DocType, uri: string, mimeType: string) => {
     setUploading(doc);
     try {
-      const res = await fetch(`${BASE}/api/stores/kyc`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ storeId, docType: doc, imageBase64: base64, mimeType }),
-      });
-      if (res.ok) {
-        setUploads((prev) => ({ ...prev, [doc]: `data:${mimeType};base64,${base64}` }));
-      } else {
-        const d = await res.json() as { error?: string };
-        Alert.alert('Upload failed', d.error ?? 'Please try again.');
-      }
+      const form = new FormData();
+      form.append('storeId', storeId ?? '');
+      form.append('file', { uri, name: `${doc}.jpg`, type: mimeType } as unknown as Blob);
+      const res = await fetch(`${API_BASE_URL}/api/stores/upload`, { method: 'POST', body: form });
+      const d = await res.json() as { url?: string; error?: string };
+      if (!res.ok || !d.url) throw new Error(d.error ?? 'Upload failed');
+      setUploads((prev) => ({ ...prev, [doc]: d.url }));
     } catch (e) {
-      Alert.alert('Error', (e as Error).message);
+      Alert.alert('Upload failed', (e as Error).message ?? 'Please try again.');
     } finally {
       setUploading(null);
     }
@@ -69,13 +91,22 @@ export default function KYC() {
   const submitKYC = async () => {
     setSubmitting(true);
     try {
-      const res = await fetch(`${BASE}/api/stores/kyc/submit`, {
+      const res = await fetch(`${API_BASE_URL}/api/stores/kyc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ storeId }),
+        body: JSON.stringify({
+          storeId,
+          panUrl: uploads.pan,
+          aadhaarUrl: uploads.aadhaar,
+          selfieUrl: uploads.selfie,
+        }),
       });
-      if (res.ok) setSubmitted(true);
-      else Alert.alert('Error', 'Could not submit KYC. Please try again.');
+      if (res.ok) {
+        setStatus('submitted');
+      } else {
+        const d = await res.json() as { error?: string };
+        Alert.alert('Error', d.error ?? 'Could not submit KYC. Please try again.');
+      }
     } catch (e) {
       Alert.alert('Error', (e as Error).message);
     } finally {
@@ -83,12 +114,22 @@ export default function KYC() {
     }
   };
 
-  if (submitted) {
+  if (loading) {
+    return <View style={s.center}><ActivityIndicator size="large" color={C.primary} /></View>;
+  }
+
+  if (status === 'submitted' || status === 'approved') {
     return (
       <View style={s.center}>
-        <View style={s.successCircle}><Ionicons name="checkmark" size={32} color={C.success} /></View>
-        <Text style={s.successTitle}>KYC submitted!</Text>
-        <Text style={s.successSub}>Our team will verify your documents within 24–48 hours.</Text>
+        <View style={s.successCircle}>
+          <Ionicons name={status === 'approved' ? 'checkmark-done' : 'checkmark'} size={32} color={C.success} />
+        </View>
+        <Text style={s.successTitle}>{status === 'approved' ? 'KYC verified!' : 'KYC submitted!'}</Text>
+        <Text style={s.successSub}>
+          {status === 'approved'
+            ? 'Your documents are verified. Payouts are unlocked.'
+            : 'Our team will verify your documents within 24–48 hours.'}
+        </Text>
       </View>
     );
   }
@@ -106,6 +147,12 @@ export default function KYC() {
         <Text style={s.cardSub}>
           Upload your PAN, Aadhaar, and a selfie to complete KYC. Required for receiving payouts.
         </Text>
+        {status === 'rejected' && rejectedReason && (
+          <View style={s.rejectBox}>
+            <Ionicons name="alert-circle" size={14} color={C.error} />
+            <Text style={s.rejectText}>{rejectedReason}</Text>
+          </View>
+        )}
       </View>
 
       {DOCS.map((doc) => (
@@ -175,6 +222,8 @@ const s = StyleSheet.create({
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   cardTitle: { fontSize: 14, fontWeight: '700', color: C.text },
   cardSub: { fontSize: 12, color: C.textSub, lineHeight: 17 },
+  rejectBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: C.errorLight, borderWidth: 1, borderColor: C.primaryBorder, borderRadius: 10, padding: 12, marginTop: 4 },
+  rejectText: { flex: 1, fontSize: 12, color: C.error, lineHeight: 18 },
   docCard: { backgroundColor: C.card, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: C.border, gap: 10 },
   docHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   docIconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
