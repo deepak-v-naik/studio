@@ -19,11 +19,15 @@ function fmtDate(iso: string) {
 }
 
 async function md5Hex(file: File): Promise<string> {
-  // Web Crypto doesn't support MD5; use SHA-256 truncated to 32 hex chars as cache key
+  // Web Crypto doesn't support MD5; use full SHA-256 hex as the cache key.
+  // Must NOT be truncated to 32 chars: the player's hashMatches() picks MD5
+  // vs SHA-256 purely by string length (<=32 -> MD5), so a truncated SHA-256
+  // gets misread as a real MD5 digest and never verifies — content downloads
+  // forever fail integrity checks and never become playable.
   try {
     const buf    = await file.arrayBuffer();
     const digest = await crypto.subtle.digest('SHA-256', buf);
-    return Array.from(new Uint8Array(digest)).slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('');
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
   } catch {
     return `nohash-${Date.now()}`;
   }
