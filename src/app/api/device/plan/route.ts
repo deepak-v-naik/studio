@@ -279,6 +279,14 @@ export async function GET(req: NextRequest) {
       data:  { lastSeen: now, status: 'ONLINE' },
     });
 
+    // Fleet-wide player behavior knobs (retry interval, transition duration, kiosk key
+    // lock, download timeouts). Device-level like orientation, not content-level like
+    // transition -- excluded from planHash so a config-only change doesn't trigger the
+    // "new content" banner or a re-download pass.
+    const playerConfig = await db.playerConfig.upsert({
+      where: { id: 1 }, update: {}, create: { id: 1 },
+    });
+
     return NextResponse.json({
       planHash,
       scheduleId: schedule?.id ?? null,
@@ -286,6 +294,13 @@ export async function GET(req: NextRequest) {
       forceSyncAt: device.forceSyncAt?.toISOString() ?? null,
       orientation: device.orientation,
       transition,
+      config: {
+        retryIntervalMs:          playerConfig.retryIntervalMs,
+        transitionDurationMs:     playerConfig.transitionDurationMs,
+        kioskKeyLockEnabled:      playerConfig.kioskKeyLockEnabled,
+        downloadConnectTimeoutMs: playerConfig.downloadConnectTimeoutMs,
+        downloadReadTimeoutMs:    playerConfig.downloadReadTimeoutMs,
+      },
       items,
       timeline,
       overlays,

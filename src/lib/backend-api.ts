@@ -182,6 +182,24 @@ export const bulkPushSchedule = (body: { deviceIds: string[]; playlistId: string
 export const getDeviceGroups = () =>
   apiFetch<{ groups: DeviceGroup[] }>('/api/devices/groups').then((r) => r.groups);
 
+// ─── Player config (fleet-wide behavior knobs, no APK rebuild required) ──────
+
+export type PlayerConfig = {
+  retryIntervalMs:          number;
+  transitionDurationMs:     number;
+  kioskKeyLockEnabled:      boolean;
+  downloadConnectTimeoutMs: number;
+  downloadReadTimeoutMs:    number;
+  updatedAt:                string;
+};
+
+export const getPlayerConfig = () =>
+  apiFetch<{ config: PlayerConfig }>('/api/admin/player-config').then((r) => r.config);
+
+export const updatePlayerConfig = (body: Partial<Omit<PlayerConfig, 'updatedAt'>>) =>
+  apiFetch<{ config: PlayerConfig }>('/api/admin/player-config', { method: 'PATCH', body: JSON.stringify(body) })
+    .then((r) => r.config);
+
 export const searchStores = (params?: { q?: string; city?: string }) => {
   const qs = params && Object.keys(params).filter(k => params[k as keyof typeof params]).length
     ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';

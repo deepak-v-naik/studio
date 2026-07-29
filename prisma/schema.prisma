@@ -817,3 +817,15 @@ model StoreSensorHealth {
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }
+
+// Singleton row (id always 1) — fleet-wide player behavior knobs, editable from
+// admin without an APK rebuild. Player reads these via /api/device/plan.
+model PlayerConfig {
+  id                       Int      @id @default(1)
+  retryIntervalMs          Int      @default(30000) // how often the player retries after no schedule/content
+  transitionDurationMs     Int      @default(600)    // fade/slide animation length
+  kioskKeyLockEnabled      Boolean  @default(true)    // swallow BACK/HOME/MENU/etc. on the playback screen
+  downloadConnectTimeoutMs Int      @default(30000)
+  downloadReadTimeoutMs    Int      @default(60000)
+  updatedAt                DateTime @updatedAt
+}
