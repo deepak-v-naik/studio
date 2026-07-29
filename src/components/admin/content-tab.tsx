@@ -23,7 +23,7 @@ async function md5Hex(file: File): Promise<string> {
   try {
     const buf    = await file.arrayBuffer();
     const digest = await crypto.subtle.digest('SHA-256', buf);
-    return Array.from(new Uint8Array(digest)).slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('');
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
   } catch {
     return `nohash-${Date.now()}`;
   }
