@@ -190,6 +190,7 @@ export type PlayerConfig = {
   kioskKeyLockEnabled:      boolean;
   downloadConnectTimeoutMs: number;
   downloadReadTimeoutMs:    number;
+  fallbackPlaylistId:       string | null;
   updatedAt:                string;
 };
 

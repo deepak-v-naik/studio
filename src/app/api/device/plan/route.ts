@@ -107,6 +107,56 @@ function resolveConflicts(schedules: ScheduleWindow[]): ResolvedSlot[] {
   return slots;
 }
 
+// ── Dayparting ───────────────────────────────────────────────────────────────
+// Schedules can carry an optional daily window (dailyStart/dailyEnd, "HH:mm",
+// IST). Expand each schedule into concrete daily sub-windows so resolveConflicts
+// and the player's timeline honour it — previously these fields were stored by
+// the admin UI but silently ignored here.
+
+const IST_OFFSET_MS = 330 * 60 * 1000; // +05:30, no DST
+const DAY_MS = 86_400_000;
+
+function parseHHmm(v: string | null): number | null {
+  if (!v) return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  if (!m) return null;
+  const h = Number(m[1]), min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return (h * 60 + min) * 60 * 1000;
+}
+
+function expandDaypart(
+  s: { startAt: Date; endAt: Date; dailyStart: string | null; dailyEnd: string | null },
+  horizonStart: Date,
+  horizonEnd: Date,
+): { startAt: Date; endAt: Date }[] {
+  const rangeStart = Math.max(s.startAt.getTime(), horizonStart.getTime());
+  const rangeEnd   = Math.min(s.endAt.getTime(),   horizonEnd.getTime());
+  if (rangeStart >= rangeEnd) return [];
+
+  const dayStartMs = parseHHmm(s.dailyStart);
+  const dayEndMs   = parseHHmm(s.dailyEnd);
+  if (dayStartMs == null || dayEndMs == null) {
+    return [{ startAt: new Date(rangeStart), endAt: new Date(rangeEnd) }];
+  }
+
+  const out: { startAt: Date; endAt: Date }[] = [];
+  // Walk IST calendar days, starting one day early so an overnight window
+  // (dailyEnd <= dailyStart, e.g. 22:00–06:00) begun yesterday still covers
+  // the start of the range.
+  let dayIst = Math.floor((rangeStart + IST_OFFSET_MS) / DAY_MS) * DAY_MS - DAY_MS;
+  const lastDayIst = Math.floor((rangeEnd + IST_OFFSET_MS) / DAY_MS) * DAY_MS;
+  for (; dayIst <= lastDayIst; dayIst += DAY_MS) {
+    const winStart = dayIst + dayStartMs - IST_OFFSET_MS;
+    let   winEnd   = dayIst + dayEndMs   - IST_OFFSET_MS;
+    if (dayEndMs <= dayStartMs) winEnd += DAY_MS; // overnight wrap
+    const start = Math.max(winStart, rangeStart);
+    const end   = Math.min(winEnd,   rangeEnd);
+    if (start < end) out.push({ startAt: new Date(start), endAt: new Date(end) });
+  }
+  return out;
+}
+
 export async function GET(req: NextRequest) {
   const correlationId = getOrCreateCorrelationId(req.headers.get('x-correlation-id'));
   const route = '/api/device/plan';
@@ -147,6 +197,8 @@ export async function GET(req: NextRequest) {
         startAt:    true,
         endAt:      true,
         recurrence: true,
+        dailyStart: true,
+        dailyEnd:   true,
         playlist: {
           select: {
             transition: true,
@@ -172,13 +224,15 @@ export async function GET(req: NextRequest) {
       orderBy: [{ priority: 'desc' }, { startAt: 'asc' }],
     });
 
-    // Resolve priority conflicts across the 72-hr window
-    const windows: ScheduleWindow[] = schedules.map((s) => ({
-      scheduleId: s.id,
-      priority:   s.priority,
-      startAt:    s.startAt,
-      endAt:      s.endAt,
-    }));
+    // Resolve priority conflicts across the 72-hr window, honouring dayparting
+    const windows: ScheduleWindow[] = schedules.flatMap((s) =>
+      expandDaypart(s, now, windowEnd).map((w) => ({
+        scheduleId: s.id,
+        priority:   s.priority,
+        startAt:    w.startAt,
+        endAt:      w.endAt,
+      })),
+    );
     const resolvedSlots = resolveConflicts(windows);
 
     // Build a map for quick lookup of schedule data
@@ -264,27 +318,55 @@ export async function GET(req: NextRequest) {
 
     const transition = schedule?.playlist.transition ?? 'NONE';
 
+    // Fleet-wide player behavior knobs (retry interval, transition duration, kiosk key
+    // lock, download timeouts, fallback playlist). The scalar knobs are device-level
+    // like orientation and excluded from planHash; the fallback playlist is content
+    // and IS hashed, so changing it triggers a refresh + download like any playlist.
+    const playerConfig = await db.playerConfig.upsert({
+      where: { id: 1 }, update: {}, create: { id: 1 },
+    });
+
+    // Xibo-style default layout: content to play when no schedule window is active,
+    // instead of the idle "waiting for content" screen.
+    let fallback: typeof items = [];
+    if (playerConfig.fallbackPlaylistId) {
+      const fp = await db.playlist.findUnique({
+        where:  { id: playerConfig.fallbackPlaylistId },
+        select: {
+          items: {
+            select: {
+              durationMs: true,
+              order:      true,
+              content:    { select: { id: true, objectKey: true, md5: true, type: true, durationMs: true } },
+            },
+            orderBy: { order: 'asc' },
+          },
+        },
+      });
+      fallback = fp?.items.map((item) => ({
+        contentId:  item.content.id,
+        objectKey:  item.content.objectKey,
+        url:        publicUrl(item.content.objectKey),
+        md5:        item.content.md5,
+        type:       item.content.type,
+        durationMs: item.durationMs,
+        order:      item.order,
+      })) ?? [];
+    }
+
     // Hash the plan so the player can detect changes without re-downloading.
     // transition is included (unlike orientation, which is device-level and applied
     // outside this pipeline) since it flows through the same cached-plan-JSON path as
     // items -- a transition-only change is a real schedule update worth refreshing for.
     const planHash = crypto
       .createHash('md5')
-      .update(JSON.stringify({ items, timeline, overlays, transition, forceSyncAt: device.forceSyncAt?.toISOString() ?? null }))
+      .update(JSON.stringify({ items, timeline, overlays, transition, fallback, forceSyncAt: device.forceSyncAt?.toISOString() ?? null }))
       .digest('hex');
 
     // Update device heartbeat
     await db.device.update({
       where: { id: device.id },
       data:  { lastSeen: now, status: 'ONLINE' },
-    });
-
-    // Fleet-wide player behavior knobs (retry interval, transition duration, kiosk key
-    // lock, download timeouts). Device-level like orientation, not content-level like
-    // transition -- excluded from planHash so a config-only change doesn't trigger the
-    // "new content" banner or a re-download pass.
-    const playerConfig = await db.playerConfig.upsert({
-      where: { id: 1 }, update: {}, create: { id: 1 },
     });
 
     return NextResponse.json({
@@ -294,6 +376,7 @@ export async function GET(req: NextRequest) {
       forceSyncAt: device.forceSyncAt?.toISOString() ?? null,
       orientation: device.orientation,
       transition,
+      fallback,
       config: {
         retryIntervalMs:          playerConfig.retryIntervalMs,
         transitionDurationMs:     playerConfig.transitionDurationMs,
