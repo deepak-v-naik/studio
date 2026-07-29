@@ -262,10 +262,15 @@ export async function GET(req: NextRequest) {
       priority:    o.priority,
     }));
 
-    // Hash the plan so the player can detect changes without re-downloading
+    const transition = schedule?.playlist.transition ?? 'NONE';
+
+    // Hash the plan so the player can detect changes without re-downloading.
+    // transition is included (unlike orientation, which is device-level and applied
+    // outside this pipeline) since it flows through the same cached-plan-JSON path as
+    // items -- a transition-only change is a real schedule update worth refreshing for.
     const planHash = crypto
       .createHash('md5')
-      .update(JSON.stringify({ items, timeline, overlays, forceSyncAt: device.forceSyncAt?.toISOString() ?? null }))
+      .update(JSON.stringify({ items, timeline, overlays, transition, forceSyncAt: device.forceSyncAt?.toISOString() ?? null }))
       .digest('hex');
 
     // Update device heartbeat
@@ -280,7 +285,7 @@ export async function GET(req: NextRequest) {
       validUntil: windowEnd.toISOString(),
       forceSyncAt: device.forceSyncAt?.toISOString() ?? null,
       orientation: device.orientation,
-      transition:  schedule?.playlist.transition ?? 'NONE',
+      transition,
       items,
       timeline,
       overlays,
