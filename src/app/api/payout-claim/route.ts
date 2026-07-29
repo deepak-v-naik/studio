@@ -1,21 +1,21 @@
 // POST /api/payout-claim — store partner requests monthly payout
-// Auth: store session required
+// Auth: storeId (mobile app) or store session (web dashboard) — see resolveStoreId
 // Logs to AuditLog + notifies admin via WhatsApp
 
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { notifyAdminWA, payoutClaimMsg } from '@/lib/notify';
 import { withApiHandler } from '@/lib/with-api-handler';
+import { resolveStoreId } from '@/lib/store-partner-auth';
 
 export const POST = withApiHandler('/api/payout-claim', 'user', async (req: NextRequest) => {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const { month, storeId: bodyStoreId } = await req.json() as { month?: string; storeId?: string };
 
-  const { month } = await req.json() as { month?: string };
+  const storeId = await resolveStoreId(bodyStoreId);
+  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const store = await db.store.findUnique({
-    where:   { userId: session.user.id },
+    where:   { id: storeId },
     include: { user: { select: { phone: true } } },
   });
   if (!store) return NextResponse.json({ error: 'Store not found' }, { status: 404 });
@@ -25,7 +25,7 @@ export const POST = withApiHandler('/api/payout-claim', 'user', async (req: Next
 
   await db.auditLog.create({
     data: {
-      actorId: session.user.id,
+      actorId: store.userId,
       action:  'PAYOUT_CLAIM',
       target:  store.id,
       meta:    { storeName: store.storeName, month: claimMonth, amount: `₹${monthlyRupees.toLocaleString('en-IN')} + electricity` },

@@ -1,25 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
-import { db } from '@/lib/db';
 import { putObject, publicUrl } from '@/lib/r2';
+import { resolveStoreId } from '@/lib/store-partner-auth';
 import crypto from 'crypto';
 
 export const maxDuration = 30;
 
-// POST — store partner image upload for product photos / offer images
-// Body: FormData with 'file' (File). Max 4 MB.
+// POST — store partner image upload for product photos / offer images / KYC docs
+// Body: FormData with 'file' (File) and, from the mobile app, 'storeId'. Max 4 MB.
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  // Resolve storeId for the authenticated user
-  const store = await db.store.findFirst({ where: { userId: session.user.id }, select: { id: true } });
-  if (!store) return NextResponse.json({ error: 'Store not found' }, { status: 404 });
-
   try {
     const form = await req.formData();
     const file = form.get('file') as File | null;
     if (!file) return NextResponse.json({ error: 'file required' }, { status: 400 });
+
+    const storeId = await resolveStoreId((form.get('storeId') as string | null) ?? req.nextUrl.searchParams.get('storeId'));
+    if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const MAX_BYTES = 4 * 1024 * 1024;
     if (file.size > MAX_BYTES) {
@@ -32,7 +27,7 @@ export async function POST(req: NextRequest) {
     }
 
     const ext     = file.name.split('.').pop()?.toLowerCase() ?? 'jpg';
-    const key     = `stores/${store.id}/${crypto.randomUUID()}.${ext}`;
+    const key     = `stores/${storeId}/${crypto.randomUUID()}.${ext}`;
     const bytes   = await file.arrayBuffer();
     await putObject(key, Buffer.from(bytes), file.type);
 

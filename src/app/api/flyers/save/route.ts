@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
+import { resolveStoreId } from '@/lib/store-partner-auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type Flyer = {
   id:          string;
+  storeId?:    string;
   storeName:   string;
   title:       string;
   description: string;
@@ -28,18 +30,25 @@ const INDEX_KEY = 'flyers:index'; // string[] of IDs — no images, stays tiny
 // ─── POST — save a flyer ──────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const pw = req.headers.get('admin-password') ?? '';
-  if (process.env.ADMIN_PASSWORD && pw !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const kv = getRedis();
-  if (!kv) return NextResponse.json({ success: true, id: 'demo', note: 'Redis not configured' });
-
   try {
     const body = await req.json() as Omit<Flyer, 'id' | 'createdAt'>;
+
+    // Two callers: the admin panel (admin-password header) uploading on a store's
+    // behalf, and the store partner app (storeId — no session, same as every other
+    // store-partner route, see resolveStoreId).
+    const pw = req.headers.get('admin-password') ?? '';
+    const isAdmin = !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+    const storeId = isAdmin ? null : await resolveStoreId(body.storeId);
+    if (!isAdmin && !storeId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const kv = getRedis();
+    if (!kv) return NextResponse.json({ success: true, id: 'demo', note: 'Redis not configured' });
+
     const flyer: Flyer = {
       ...body,
+      storeId:   storeId ?? body.storeId,
       id:        `flyer_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       createdAt: new Date().toISOString(),
     };
