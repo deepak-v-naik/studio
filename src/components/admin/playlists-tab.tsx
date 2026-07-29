@@ -30,6 +30,7 @@ export default function PlaylistsTab() {
   const [creating,   setCreating]   = useState(false);
   const [saving,     setSaving]     = useState(false);
   const [draft,      setDraft]      = useState<DraftItem[]>([]);
+  const [transition, setTransition] = useState<Playlist['transition']>('NONE');
   const [saved,      setSaved]      = useState(false);
 
   // Drag-to-reorder refs
@@ -55,6 +56,7 @@ export default function PlaylistsTab() {
       type:       i.content.type,
       url:        i.content.url,
     })));
+    setTransition(pl.transition);
     setSaved(false);
   };
 
@@ -114,6 +116,7 @@ export default function PlaylistsTab() {
     try {
       const updated = await updatePlaylist(selected, {
         items: draft.map((i) => ({ contentId: i.contentId, durationMs: i.durationMs })),
+        transition,
       });
       setPlaylists((p) => p.map((pl) => pl.id === selected ? updated : pl));
       setSaved(true);
@@ -226,16 +229,30 @@ export default function PlaylistsTab() {
                 <p className="text-sm font-bold text-foreground">{activePl?.name}</p>
                 <p className="text-[10px] text-muted-foreground">{draft.length} items · {fmtMs(draft.reduce((s, i) => s + i.durationMs, 0))} total · drag to reorder</p>
               </div>
-              <button
-                onClick={save}
-                disabled={saving}
-                className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition-colors disabled:opacity-40 ${
-                  saved ? 'bg-green-500/10 text-green-700 border border-green-500/30' : 'bg-primary text-white hover:bg-primary/90'
-                }`}
-              >
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5" /> : null}
-                {saving ? 'Saving…' : saved ? 'Saved' : 'Save playlist'}
-              </button>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Transition</label>
+                  <select
+                    value={transition}
+                    onChange={(e) => { setTransition(e.target.value as Playlist['transition']); setSaved(false); }}
+                    className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground focus:outline-none focus:border-primary"
+                  >
+                    <option value="NONE">None (cut)</option>
+                    <option value="FADE">Fade</option>
+                    <option value="SLIDE">Slide</option>
+                  </select>
+                </div>
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition-colors disabled:opacity-40 ${
+                    saved ? 'bg-green-500/10 text-green-700 border border-green-500/30' : 'bg-primary text-white hover:bg-primary/90'
+                  }`}
+                >
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5" /> : null}
+                  {saving ? 'Saving…' : saved ? 'Saved' : 'Save playlist'}
+                </button>
+              </div>
             </div>
 
             {!draft.length ? (
