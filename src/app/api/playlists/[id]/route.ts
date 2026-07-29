@@ -41,14 +41,21 @@ export async function PATCH(
   if (!adminGuard(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { id } = await params;
   try {
-    const { name, items } = await req.json() as {
-      name?:  string;
-      items?: { contentId: string; durationMs: number }[];
+    const { name, items, transition } = await req.json() as {
+      name?:       string;
+      items?:      { contentId: string; durationMs: number }[];
+      transition?: 'NONE' | 'FADE' | 'SLIDE';
     };
 
     await db.$transaction(async (tx) => {
-      if (name?.trim()) {
-        await tx.playlist.update({ where: { id }, data: { name: name.trim() } });
+      if (name?.trim() || transition) {
+        await tx.playlist.update({
+          where: { id },
+          data: {
+            ...(name?.trim() ? { name: name.trim() } : {}),
+            ...(transition   ? { transition }         : {}),
+          },
+        });
       }
       if (items !== undefined) {
         await tx.playlistItem.deleteMany({ where: { playlistId: id } });
@@ -74,7 +81,7 @@ export async function PATCH(
       include: { items: { include: { content: { select: CONTENT_SELECT } }, orderBy: { order: 'asc' } } },
     });
     // Push plan_updated to all devices scheduled via this playlist (best-effort, non-blocking)
-    if (items !== undefined) {
+    if (items !== undefined || transition !== undefined) {
       db.schedule.findMany({
         where: { playlistId: id },
         select: { deviceIds: true, groupName: true, storeIds: true, cityFilter: true },

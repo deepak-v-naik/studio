@@ -389,13 +389,20 @@ model Content {
 }
 
 model Playlist {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String             @id @default(cuid())
+  name       String
+  transition PlaylistTransition @default(NONE)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
 
   items     PlaylistItem[]
   schedules Schedule[]
+}
+
+enum PlaylistTransition {
+  NONE
+  FADE
+  SLIDE
 }
 
 model PlaylistItem {

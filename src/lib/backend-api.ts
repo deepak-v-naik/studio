@@ -111,10 +111,11 @@ export type PlaylistItem = {
 };
 
 export type Playlist = {
-  id:        string;
-  name:      string;
-  items:     PlaylistItem[];
-  createdAt: string;
+  id:         string;
+  name:       string;
+  transition: 'NONE' | 'FADE' | 'SLIDE';
+  items:      PlaylistItem[];
+  createdAt:  string;
 };
 
 export type Schedule = {
@@ -230,11 +231,11 @@ export const initiateUpload = (body: {
 export const getPlaylists = () =>
   apiFetch<{ playlists: Playlist[] }>('/api/playlists').then((r) => r.playlists);
 
-export const createPlaylist = (body: { name: string; items?: { contentId: string; durationMs: number }[] }) =>
+export const createPlaylist = (body: { name: string; items?: { contentId: string; durationMs: number }[]; transition?: Playlist['transition'] }) =>
   apiFetch<{ playlist: Playlist }>('/api/playlists', { method: 'POST', body: JSON.stringify(body) })
     .then((r) => r.playlist);
 
-export const updatePlaylist = (id: string, body: { name?: string; items?: { contentId: string; durationMs: number }[] }) =>
+export const updatePlaylist = (id: string, body: { name?: string; items?: { contentId: string; durationMs: number }[]; transition?: Playlist['transition'] }) =>
   apiFetch<{ playlist: Playlist }>(`/api/playlists/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
     .then((r) => r.playlist);
 

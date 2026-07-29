@@ -55,15 +55,17 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!adminGuard(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
-    const { name, items = [] } = await req.json() as {
+    const { name, items = [], transition } = await req.json() as {
       name: string;
       items?: { contentId: string; durationMs: number }[];
+      transition?: 'NONE' | 'FADE' | 'SLIDE';
     };
     if (!name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 });
 
     const playlist = await db.playlist.create({
       data: {
         name: name.trim(),
+        transition: transition ?? 'NONE',
         items: {
           create: items.map((item, idx) => ({
             contentId:  item.contentId,

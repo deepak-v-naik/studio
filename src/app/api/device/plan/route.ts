@@ -149,6 +149,7 @@ export async function GET(req: NextRequest) {
         recurrence: true,
         playlist: {
           select: {
+            transition: true,
             items: {
               select: {
                 durationMs: true,
@@ -279,6 +280,7 @@ export async function GET(req: NextRequest) {
       validUntil: windowEnd.toISOString(),
       forceSyncAt: device.forceSyncAt?.toISOString() ?? null,
       orientation: device.orientation,
+      transition:  schedule?.playlist.transition ?? 'NONE',
       items,
       timeline,
       overlays,
