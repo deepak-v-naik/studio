@@ -278,6 +278,7 @@ export async function GET(req: NextRequest) {
       scheduleId: schedule?.id ?? null,
       validUntil: windowEnd.toISOString(),
       forceSyncAt: device.forceSyncAt?.toISOString() ?? null,
+      orientation: device.orientation,
       items,
       timeline,
       overlays,
