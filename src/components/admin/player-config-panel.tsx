@@ -2,19 +2,23 @@
 
 import { useEffect, useState } from 'react';
 import { Loader2, Check, Settings2 } from 'lucide-react';
-import { getPlayerConfig, updatePlayerConfig, type PlayerConfig } from '@/lib/backend-api';
+import { getPlayerConfig, updatePlayerConfig, getPlaylists, type PlayerConfig, type Playlist } from '@/lib/backend-api';
 import { toast } from '@/hooks/use-toast';
 
 const inp = 'w-24 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center text-foreground focus:outline-none focus:border-primary';
 
 export default function PlayerConfigPanel() {
-  const [config,  setConfig]  = useState<PlayerConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving,  setSaving]  = useState(false);
-  const [saved,   setSaved]   = useState(false);
+  const [config,    setConfig]    = useState<PlayerConfig | null>(null);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [saving,    setSaving]    = useState(false);
+  const [saved,     setSaved]     = useState(false);
 
   useEffect(() => {
-    getPlayerConfig().then(setConfig).catch(() => {}).finally(() => setLoading(false));
+    Promise.all([
+      getPlayerConfig().then(setConfig),
+      getPlaylists().then(setPlaylists).catch(() => {}),
+    ]).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   const update = <K extends keyof PlayerConfig>(key: K, value: PlayerConfig[K]) => {
@@ -32,6 +36,7 @@ export default function PlayerConfigPanel() {
         kioskKeyLockEnabled:      config.kioskKeyLockEnabled,
         downloadConnectTimeoutMs: config.downloadConnectTimeoutMs,
         downloadReadTimeoutMs:    config.downloadReadTimeoutMs,
+        fallbackPlaylistId:       config.fallbackPlaylistId,
       });
       setConfig(updated);
       setSaved(true);
@@ -102,6 +107,21 @@ export default function PlayerConfigPanel() {
             checked={config.kioskKeyLockEnabled}
             onChange={(e) => update('kioskKeyLockEnabled', e.target.checked)} />
           <span className="text-[11px] font-semibold text-foreground">Kiosk key lock</span>
+        </label>
+
+        <label className="space-y-1 col-span-2 sm:col-span-1">
+          <span className="block text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Fallback playlist</span>
+          <select
+            value={config.fallbackPlaylistId ?? ''}
+            onChange={(e) => update('fallbackPlaylistId', e.target.value || null)}
+            className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground focus:outline-none focus:border-primary"
+          >
+            <option value="">None (waiting screen)</option>
+            {playlists.map((pl) => (
+              <option key={pl.id} value={pl.id}>{pl.name}</option>
+            ))}
+          </select>
+          <span className="block text-[10px] text-muted-foreground">Plays when no schedule window is active — screens never sit idle.</span>
         </label>
       </div>
     </div>

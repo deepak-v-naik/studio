@@ -38,6 +38,7 @@ export async function PATCH(req: NextRequest) {
       kioskKeyLockEnabled?:      boolean;
       downloadConnectTimeoutMs?: number;
       downloadReadTimeoutMs?:    number;
+      fallbackPlaylistId?:       string | null;
     };
 
     await getOrCreateConfig();
