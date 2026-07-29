@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import { Loader2, Wifi, WifiOff, Clock, AlertCircle, RefreshCw, Bell, LayoutGrid, Map } from 'lucide-react';
 import { getDevices, type Device } from '@/lib/backend-api';
+import PlayerConfigPanel from './player-config-panel';
 
 const FleetMap = lazy(() => import('./fleet-map'));
 
@@ -193,6 +194,9 @@ export default function MonitoringTab() {
           })}
         </div>
       )}
+
+      <SectionLabel n={2} label="Player config" />
+      <PlayerConfigPanel />
     </div>
   );
 }
