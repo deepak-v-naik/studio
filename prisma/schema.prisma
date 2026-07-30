@@ -243,6 +243,12 @@ enum DeviceStatus {
 enum DeviceOrientation {
   LANDSCAPE
   PORTRAIT
+  // Portrait rotated 180°, for a panel mounted with its ports/logo at the top. Which
+  // way a wall-mounted screen is physically installed cannot be sensed: the
+  // accelerometer reads a constant gravity vector on a static mount and reports the
+  // same value either way, so this is an explicit operator choice, set here or with
+  // the on-device rotate control.
+  PORTRAIT_FLIPPED
   AUTO
 }
 
@@ -252,7 +258,7 @@ model Device {
   storeId          String?
   name             String
   groupName        String? // e.g. "Mangaluru North" — for group-based scheduling
-  orientation      DeviceOrientation @default(AUTO)
+  orientation      DeviceOrientation @default(PORTRAIT)
   jwtSecret        String // per-device secret used to sign tokens
   status           DeviceStatus      @default(PENDING)
   lastSeen         DateTime?

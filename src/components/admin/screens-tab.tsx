@@ -559,7 +559,7 @@ function RenameField({ device, onSave }: { device: Device; onSave: (d: Device) =
 // ─── Orientation select ───────────────────────────────────────────────────────
 function OrientationSelect({ device, onSave }: { device: Device; onSave: (d: Device) => void }) {
   const [saving, setSaving] = useState(false);
-  const val = device.orientation ?? 'LANDSCAPE';
+  const val = device.orientation ?? 'PORTRAIT';
 
   const change = async (o: string) => {
     setSaving(true);
@@ -578,9 +578,10 @@ function OrientationSelect({ device, onSave }: { device: Device; onSave: (d: Dev
         disabled={saving}
         className="rounded-lg border border-border bg-background px-2 py-0.5 text-[10px] font-semibold focus:outline-none focus:border-primary disabled:opacity-50 transition-all"
       >
-        <option value="LANDSCAPE">Landscape</option>
         <option value="PORTRAIT">Portrait</option>
-        <option value="AUTO">Auto</option>
+        <option value="PORTRAIT_FLIPPED">Portrait (flipped 180°)</option>
+        <option value="LANDSCAPE">Landscape</option>
+        <option value="AUTO">Auto (device decides)</option>
       </select>
       {saving && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
     </div>

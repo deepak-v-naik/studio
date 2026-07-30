@@ -9,7 +9,7 @@ function adminGuard(req: NextRequest) {
   return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
 }
 
-const VALID_ORIENTATIONS = ['LANDSCAPE', 'PORTRAIT', 'AUTO'] as const;
+const VALID_ORIENTATIONS = ['LANDSCAPE', 'PORTRAIT', 'PORTRAIT_FLIPPED', 'AUTO'] as const;
 
 export async function PATCH(
   req: NextRequest,
