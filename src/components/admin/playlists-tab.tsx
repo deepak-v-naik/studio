@@ -284,9 +284,13 @@ export default function PlaylistsTab() {
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={item.url} alt="" className="h-9 w-14 object-cover rounded-lg bg-muted shrink-0" />
                     ) : (
-                      <div className="flex h-9 w-14 items-center justify-center rounded-lg bg-purple-500/10 shrink-0">
-                        <Film className="h-4 w-4 text-purple-600" />
-                      </div>
+                      <video
+                        src={item.url}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="h-9 w-14 object-cover rounded-lg bg-purple-500/10 shrink-0"
+                      />
                     )}
                     <p className="flex-1 text-xs font-semibold text-foreground truncate">{item.name}</p>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -330,8 +334,18 @@ export default function PlaylistsTab() {
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={c.url} alt="" className="h-20 w-full object-cover bg-muted" />
                       ) : (
-                        <div className="flex h-20 w-full items-center justify-center bg-purple-500/10">
-                          <Film className="h-6 w-6 text-purple-600" />
+                        <div className="relative h-20 w-full bg-purple-500/10 group">
+                          <video
+                            src={c.url}
+                            muted
+                            loop
+                            playsInline
+                            preload="metadata"
+                            className="h-20 w-full object-cover"
+                            onMouseEnter={(e) => e.currentTarget.play()}
+                            onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }}
+                          />
+                          <Film className="pointer-events-none absolute bottom-1 right-1 h-3.5 w-3.5 text-white drop-shadow" />
                         </div>
                       )}
                       <div className="px-2 py-1.5">

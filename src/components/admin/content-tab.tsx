@@ -18,6 +18,26 @@ function fmtDate(iso: string) {
   catch { return iso; }
 }
 
+async function videoDurationMs(file: File): Promise<number | undefined> {
+  // Browsers expose the real duration via a hidden <video>'s loadedmetadata event —
+  // no server-side ffprobe needed. Used so playlist items default to the actual
+  // clip length instead of a hardcoded fallback.
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : undefined);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(undefined);
+    };
+    video.src = url;
+  });
+}
+
 async function md5Hex(file: File): Promise<string> {
   // Web Crypto doesn't support MD5; use full SHA-256 hex as the cache key.
   // Must NOT be truncated to 32 chars: the player's hashMatches() picks MD5
@@ -135,6 +155,7 @@ export default function ContentTab() {
 
       try {
         const hash = await md5Hex(file);
+        const durationMs = isVideo ? await videoDurationMs(file) : undefined;
 
         // Step 1: create DB record + get objectKey
         const { objectKey } = await initiateUpload({
@@ -143,6 +164,7 @@ export default function ContentTab() {
           mimeType:  file.type || undefined,
           sizeBytes: file.size,
           md5:       hash,
+          durationMs,
         });
 
         // Step 2: ask the server to presign a PUT for this exact key + content type.
