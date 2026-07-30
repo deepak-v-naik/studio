@@ -39,41 +39,47 @@ A "transcoding…" badge shows in the Content tab while `transcodeStatus` is
 
 ## One-time setup (operator, not done at runtime)
 
-### 1. Package the Lambda
+### 1. Build the container image
 
-The npm packages `@ffmpeg-installer/ffmpeg` and `@ffprobe-installer/ffprobe`
-bundle prebuilt static binaries selected by `process.platform`/`arch` at
-**install time** — so `npm install` for this function must run on
-**linux/x64** (matching the Lambda runtime), not on your Mac/Windows laptop.
-Easiest: build inside a matching container.
+Deployed as a container image, not a zip. A from-scratch build of this
+function is ~53 MB zipped (mostly the ffmpeg/ffprobe static binaries) — over
+the 50 MB cap on `aws lambda create-function --zip-file`'s direct-upload
+path, which fails with `RequestEntityTooLargeException` regardless of who
+builds it or how. Container images have no such limit (up to 10 GB via ECR),
+so this sidesteps the problem instead of routing around it with an
+S3-staged zip upload.
+
+`transcode-lambda/Dockerfile` is checked in — `docker build` is all that's
+needed, and running `npm install` *inside* the image (matching the Lambda
+runtime's linux/x64) is what makes `@ffmpeg-installer/ffmpeg` and
+`@ffprobe-installer/ffprobe` select the correct platform binaries
+automatically. Verified: booted the image locally with AWS's Lambda Runtime
+Interface Emulator and confirmed the handler's download → ffmpeg → callback
+path executes (see "Testing it" below for the same check on your machine).
 
 ```bash
 cd transcode-lambda
-docker run --rm -v "$PWD":/var/task -w /var/task \
-  public.ecr.aws/sam/build-nodejs20.x \
-  npm install --omit=dev
-zip -r function.zip index.mjs node_modules package.json
+docker build -t alive-transcode .
 ```
 
-### 2. Create the Lambda function
-
-`aws lambda create-function --zip-file` uploads directly and **caps at 50 MB
-compressed**. This package is consistently over that — bundling the ffmpeg and
-ffprobe static binaries alone puts a from-scratch build at roughly 53 MB, so
-`--zip-file` fails with `RequestEntityTooLargeException` regardless of who
-builds it or how. Upload via S3 first instead:
+### 2. Push to ECR and create the Lambda function
 
 ```bash
-# One-time: an S3 bucket to stage the zip through. Any bucket in the same
-# account/region works; this doesn't need to be public or long-lived.
-aws s3 mb s3://alive-lambda-deploys --region ap-south-1   # skip if you already have one
-aws s3 cp function.zip s3://alive-lambda-deploys/alive-transcode/function.zip
+# One-time: create the ECR repository
+aws ecr create-repository --repository-name alive-transcode --region ap-south-1
+
+# Authenticate Docker to ECR, tag, and push
+aws ecr get-login-password --region ap-south-1 | \
+  docker login --username AWS --password-stdin <account-id>.dkr.ecr.ap-south-1.amazonaws.com
+
+docker tag alive-transcode:latest \
+  <account-id>.dkr.ecr.ap-south-1.amazonaws.com/alive-transcode:latest
+docker push <account-id>.dkr.ecr.ap-south-1.amazonaws.com/alive-transcode:latest
 
 aws lambda create-function \
   --function-name alive-transcode \
-  --runtime nodejs20.x \
-  --handler index.handler \
-  --code S3Bucket=alive-lambda-deploys,S3Key=alive-transcode/function.zip \
+  --package-type Image \
+  --code ImageUri=<account-id>.dkr.ecr.ap-south-1.amazonaws.com/alive-transcode:latest \
   --role arn:aws:iam::<account-id>:role/alive-transcode-role \
   --timeout 300 \
   --memory-size 2048 \
@@ -81,9 +87,9 @@ aws lambda create-function \
   --region ap-south-1
 ```
 
-Same applies to every future update — use
-`aws lambda update-function-code --s3-bucket ... --s3-key ...` after
-re-uploading, not `--zip-file`.
+For every future update: rebuild, `docker push` the same tag (or a new one),
+then `aws lambda update-function-code --function-name alive-transcode
+--image-uri <the-uri>`.
 
 - **Memory 2048 MB minimum** — Lambda allocates CPU proportional to memory,
   and ffmpeg needs real CPU to transcode in reasonable time.
@@ -138,6 +144,29 @@ automatically via `prisma migrate deploy` in the build script (see
 `package.json`). No manual step needed beyond a normal deploy.
 
 ## Testing it
+
+### Locally, before touching AWS
+
+The `public.ecr.aws/lambda/nodejs:20` base image includes the Lambda Runtime
+Interface Emulator, so the built image can be invoked exactly like Lambda
+would, on your machine:
+
+```bash
+docker run --rm -p 9000:8080 alive-transcode
+
+# separate terminal
+curl -X POST "http://localhost:9000/2015-03-31/functions/function/invocations" \
+  -d '{"contentId": "test", "inputUrl": "https://example.com/some-video.mp4"}'
+```
+
+This proves the runtime boots and the handler's download → ffmpeg →
+R2-upload → callback path executes — set `R2_*`/`STUDIO_CALLBACK_URL`/
+`TRANSCODE_CALLBACK_SECRET` as `-e` flags on the `docker run` to exercise it
+end-to-end with a real video and a real callback. Without them, a real
+`inputUrl` will still transcode and upload to R2 correctly; only the final
+callback step will report the missing env var, which is expected.
+
+### Against the deployed Lambda
 
 1. Upload a video in the admin Content tab.
 2. Confirm the "transcoding…" badge appears, then clears within a few
