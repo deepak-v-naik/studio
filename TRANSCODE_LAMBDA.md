@@ -57,18 +57,33 @@ zip -r function.zip index.mjs node_modules package.json
 
 ### 2. Create the Lambda function
 
+`aws lambda create-function --zip-file` uploads directly and **caps at 50 MB
+compressed**. This package is consistently over that — bundling the ffmpeg and
+ffprobe static binaries alone puts a from-scratch build at roughly 53 MB, so
+`--zip-file` fails with `RequestEntityTooLargeException` regardless of who
+builds it or how. Upload via S3 first instead:
+
 ```bash
+# One-time: an S3 bucket to stage the zip through. Any bucket in the same
+# account/region works; this doesn't need to be public or long-lived.
+aws s3 mb s3://alive-lambda-deploys --region ap-south-1   # skip if you already have one
+aws s3 cp function.zip s3://alive-lambda-deploys/alive-transcode/function.zip
+
 aws lambda create-function \
   --function-name alive-transcode \
   --runtime nodejs20.x \
   --handler index.handler \
-  --zip-file fileb://function.zip \
+  --code S3Bucket=alive-lambda-deploys,S3Key=alive-transcode/function.zip \
   --role arn:aws:iam::<account-id>:role/alive-transcode-role \
   --timeout 300 \
   --memory-size 2048 \
   --ephemeral-storage '{"Size": 2048}' \
   --region ap-south-1
 ```
+
+Same applies to every future update — use
+`aws lambda update-function-code --s3-bucket ... --s3-key ...` after
+re-uploading, not `--zip-file`.
 
 - **Memory 2048 MB minimum** — Lambda allocates CPU proportional to memory,
   and ffmpeg needs real CPU to transcode in reasonable time.
