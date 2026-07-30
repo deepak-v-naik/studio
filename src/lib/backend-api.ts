@@ -21,7 +21,7 @@ export type Device = {
   lastSeen?:        string | null;
   lastPlayAt?:      string | null;
   groupName?:       string | null;
-  orientation?:     'LANDSCAPE' | 'PORTRAIT' | 'AUTO' | null;
+  orientation?:     'LANDSCAPE' | 'PORTRAIT' | 'PORTRAIT_FLIPPED' | 'AUTO' | null;
   uptimePct?:       number | null;
   claimedAt:        string;
   pairedAt?:        string | null;
