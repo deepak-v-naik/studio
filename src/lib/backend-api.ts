@@ -191,8 +191,31 @@ export type PlayerConfig = {
   downloadConnectTimeoutMs: number;
   downloadReadTimeoutMs:    number;
   fallbackPlaylistId:       string | null;
+  testPlaylistId:           string | null;
   updatedAt:                string;
 };
+
+// ─── Screen liveness test ────────────────────────────────────────────────────
+// Device.status can read ONLINE while the screen is frozen or black, because a stuck
+// player keeps heartbeating. These push known content and wait for proof-of-play,
+// which is the only evidence the screen is genuinely rendering.
+
+export type TestPlayStart  = { scheduleId: string; playlistId: string; startedAt: string; expiresAt: string };
+export type TestPlayStatus = {
+  confirmed:       boolean;
+  playedAt:        string | null;
+  durationMs:      number | null;
+  lastSeen:        string | null;
+  playbackAliveAt: string | null;
+  lastStallReason: string | null;
+  lastStallAt:     string | null;
+};
+
+export const startScreenTest = (deviceId: string) =>
+  apiFetch<TestPlayStart>(`/api/devices/${deviceId}/test-play`, { method: 'POST' });
+
+export const checkScreenTest = (deviceId: string, since: string) =>
+  apiFetch<TestPlayStatus>(`/api/devices/${deviceId}/test-play?since=${encodeURIComponent(since)}`);
 
 export const getPlayerConfig = () =>
   apiFetch<{ config: PlayerConfig }>('/api/admin/player-config').then((r) => r.config);

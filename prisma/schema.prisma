@@ -843,5 +843,8 @@ model PlayerConfig {
   // window is active, instead of the idle "waiting for content" screen.
   // Plain id, not a relation — a deleted playlist just means no fallback.
   fallbackPlaylistId       String?
+  // Playlist pushed by the per-screen "Test" action (admin > Screens). Kept short so a
+  // liveness check confirms quickly. Falls back to the newest non-empty playlist.
+  testPlaylistId           String?
   updatedAt                DateTime @updatedAt
 }

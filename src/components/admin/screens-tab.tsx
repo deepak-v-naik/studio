@@ -13,6 +13,7 @@ import {
   searchStores, forceSyncDevice, confirmPairing,
   type Device, type DeviceGroup, type StoreSearchResult, type Playlist,
 } from '@/lib/backend-api';
+import ScreenTestButton from './screen-test-button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/hooks/use-toast';
@@ -1077,6 +1078,7 @@ export default function ScreensTab() {
                         <td className="px-3 py-2 text-muted-foreground">{d.groupName ?? '—'}</td>
                         <td className="px-3 py-2">
                           <OrientationSelect device={d} onSave={(updated) => setDevices((prev) => prev.map((x) => x.id === updated.id ? { ...x, orientation: updated.orientation } : x))} />
+                          <ScreenTestButton deviceId={d.id} />
                         </td>
                         <td className="px-3 py-2">
                           <Badge variant={STATUS_BADGE[d.status]} dot className="text-[10px] py-0.5 px-2 font-bold">
@@ -1168,6 +1170,7 @@ export default function ScreensTab() {
                       <div className="px-4 py-2.5">
                         <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1 flex items-center gap-1"><Monitor className="h-2.5 w-2.5" />Orientation</p>
                         <OrientationSelect device={d} onSave={(updated) => setDevices((prev) => prev.map((x) => x.id === updated.id ? { ...x, orientation: updated.orientation } : x))} />
+                          <ScreenTestButton deviceId={d.id} />
                       </div>
                     </div>
                   </div>
