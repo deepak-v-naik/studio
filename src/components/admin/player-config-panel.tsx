@@ -37,6 +37,7 @@ export default function PlayerConfigPanel() {
         downloadConnectTimeoutMs: config.downloadConnectTimeoutMs,
         downloadReadTimeoutMs:    config.downloadReadTimeoutMs,
         fallbackPlaylistId:       config.fallbackPlaylistId,
+        testPlaylistId:           config.testPlaylistId,
       });
       setConfig(updated);
       setSaved(true);
@@ -122,6 +123,21 @@ export default function PlayerConfigPanel() {
             ))}
           </select>
           <span className="block text-[10px] text-muted-foreground">Plays when no schedule window is active — screens never sit idle.</span>
+        </label>
+
+        <label className="space-y-1 col-span-2 sm:col-span-1">
+          <span className="block text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Test playlist</span>
+          <select
+            value={config.testPlaylistId ?? ''}
+            onChange={(e) => update('testPlaylistId', e.target.value || null)}
+            className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground focus:outline-none focus:border-primary"
+          >
+            <option value="">Auto (newest playlist with content)</option>
+            {playlists.map((pl) => (
+              <option key={pl.id} value={pl.id}>{pl.name}</option>
+            ))}
+          </select>
+          <span className="block text-[10px] text-muted-foreground">Used by &ldquo;Test screen&rdquo; in Screens. Keep it short so tests confirm fast.</span>
         </label>
       </div>
     </div>

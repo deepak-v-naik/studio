@@ -39,6 +39,7 @@ export async function PATCH(req: NextRequest) {
       downloadConnectTimeoutMs?: number;
       downloadReadTimeoutMs?:    number;
       fallbackPlaylistId?:       string | null;
+      testPlaylistId?:           string | null;
     };
 
     await getOrCreateConfig();
