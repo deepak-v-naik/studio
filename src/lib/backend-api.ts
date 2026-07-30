@@ -100,6 +100,8 @@ export type Content = {
   createdAt:   string;
   tags:        string[];
   folder?:     string;
+  transcodeStatus?: 'pending' | 'done' | 'error' | null;
+  transcodeError?:  string | null;
 };
 
 export type PlaylistItem = {
@@ -266,6 +268,14 @@ export const initiateUpload = (body: {
   apiFetch<{ id: string; uploadUrl: string; objectKey: string }>('/api/content', {
     method: 'POST',
     body:   JSON.stringify(body),
+  });
+
+// Fire-and-forget: queues a background re-encode to H.264 Main@4.1 so the clip
+// hardware-decodes reliably on budget Android TV SoCs. See transcode-lambda/.
+export const transcodeVideo = (contentId: string) =>
+  apiFetch<{ ok: boolean }>('/api/admin/transcode', {
+    method: 'POST',
+    body:   JSON.stringify({ contentId }),
   });
 
 // ─── Playlists ────────────────────────────────────────────────────────────────

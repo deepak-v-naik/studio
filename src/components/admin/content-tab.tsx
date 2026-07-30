@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Loader2, Film, ImageIcon, Trash2, Upload, X, CheckCircle2, HardDrive, Tag, FolderOpen, Plus } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { getContent, deleteContent, initiateUpload, updateContentMeta, type Content } from '@/lib/backend-api';
+import { getContent, deleteContent, initiateUpload, updateContentMeta, transcodeVideo, type Content } from '@/lib/backend-api';
 import { toast } from '@/hooks/use-toast';
 
 function fmtBytes(b: number): string {
@@ -77,6 +77,16 @@ export default function ContentTab() {
   };
 
   useEffect(() => { reload(); }, []);
+
+  // Poll quietly (no loading flicker) while any video is mid-transcode, so the
+  // "transcoding" badge clears on its own once the Lambda callback lands.
+  useEffect(() => {
+    if (!content.some((c) => c.transcodeStatus === 'pending')) return;
+    const t = setInterval(() => {
+      getContent().then((r) => { setContent(r.content); setTotalBytes(r.totalBytes); }).catch(() => {});
+    }, 5_000);
+    return () => clearInterval(t);
+  }, [content]);
 
   // Derived lists for sidebar
   const allFolders = [...new Set(content.map((c) => c.folder).filter(Boolean))] as string[];
@@ -158,7 +168,7 @@ export default function ContentTab() {
         const durationMs = isVideo ? await videoDurationMs(file) : undefined;
 
         // Step 1: create DB record + get objectKey
-        const { objectKey } = await initiateUpload({
+        const { id: contentId, objectKey } = await initiateUpload({
           name:      file.name.replace(/\.[^.]+$/, ''),
           type:      isVideo ? 'video' : 'image',
           mimeType:  file.type || undefined,
@@ -213,6 +223,15 @@ export default function ContentTab() {
 
         setUploads((u) => u.map((x, i) => i === idx ? { ...x, progress: 100, done: true } : x));
         toast({ title: `${file.name} uploaded ✓` });
+
+        // Queue a background re-encode for hardware-decoder compatibility (see
+        // transcode-lambda/) — best-effort, doesn't block the upload UI on it.
+        if (isVideo) {
+          transcodeVideo(contentId).catch(() => {
+            // Non-fatal: the original file still plays fine on devices whose decoder
+            // already accepts it. Surfaced via the "Transcode failed" badge on reload.
+          });
+        }
       } catch (err) {
         const msg = (err as Error).message;
         setUploads((u) => u.map((x, i) => i === idx ? { ...x, error: msg } : x));
@@ -375,10 +394,22 @@ export default function ContentTab() {
                   </td>
                   <td className="px-4 py-3 font-semibold text-foreground max-w-[160px] truncate">{c.name}</td>
                   <td className="px-4 py-3">
-                    <Badge variant={c.type === 'video' ? 'purple' : 'info'} className="text-[10px] py-0.5 px-2 font-bold">
-                      {c.type === 'video' ? <Film className="h-2.5 w-2.5" /> : <ImageIcon className="h-2.5 w-2.5" />}
-                      {c.type}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={c.type === 'video' ? 'purple' : 'info'} className="text-[10px] py-0.5 px-2 font-bold">
+                        {c.type === 'video' ? <Film className="h-2.5 w-2.5" /> : <ImageIcon className="h-2.5 w-2.5" />}
+                        {c.type}
+                      </Badge>
+                      {c.transcodeStatus === 'pending' && (
+                        <Badge variant="info" className="text-[10px] py-0.5 px-2 font-bold" title="Re-encoding for TV compatibility">
+                          <Loader2 className="h-2.5 w-2.5 animate-spin" /> transcoding
+                        </Badge>
+                      )}
+                      {c.transcodeStatus === 'error' && (
+                        <Badge variant="error" className="text-[10px] py-0.5 px-2 font-bold" title={c.transcodeError ?? 'Transcode failed'}>
+                          transcode failed
+                        </Badge>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{fmtBytes(c.sizeBytes)}</td>
                   <td className="px-4 py-3 text-muted-foreground/60">{fmtDate(c.createdAt)}</td>

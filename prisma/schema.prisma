@@ -394,6 +394,13 @@ model Content {
   tags         String[]    @default([])
   folder       String?
 
+  // Background re-encode to a broadly hardware-decodable format (H.264 Main@4.1) —
+  // some budget Android TV SoCs (e.g. Realtek) fail on High Profile/Level 5.0 sources
+  // even though ExoPlayer's format-support check reports them as supported. null =
+  // image or not yet queued; 'pending' while the transcode Lambda is running.
+  transcodeStatus String? // null | 'pending' | 'done' | 'error'
+  transcodeError  String?
+
   items PlaylistItem[]
 
   @@index([uploadedById])

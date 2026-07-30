@@ -31,15 +31,15 @@ export async function GET(req: NextRequest) {
       orderBy: { uploadedAt: 'desc' },
     });
 
-    // Attempt to fetch tags/folder separately — safe to fail
-    type TagRow = { id: string; tags: string[]; folder: string | null };
+    // Attempt to fetch tags/folder/transcodeStatus separately — safe to fail
+    type TagRow = { id: string; tags: string[]; folder: string | null; transcodeStatus: string | null; transcodeError: string | null };
     let tagMap = new Map<string, TagRow>();
     try {
       const tagRows = await db.$queryRaw<TagRow[]>`
-        SELECT id, tags, folder FROM "Content"
+        SELECT id, tags, folder, "transcodeStatus", "transcodeError" FROM "Content"
       `;
       tagMap = new Map(tagRows.map((r) => [r.id, r]));
-    } catch { /* columns not yet migrated — tags/folder will be empty */ }
+    } catch { /* columns not yet migrated — tags/folder/transcodeStatus will be empty */ }
 
     // Filter by folder/tag if requested (post-query, since WHERE may fail without columns)
     const filtered = rows.filter((c) => {
@@ -64,6 +64,8 @@ export async function GET(req: NextRequest) {
         createdAt:  c.uploadedAt.toISOString(),
         tags:       extra?.tags ?? [],
         folder:     extra?.folder ?? undefined,
+        transcodeStatus: (extra?.transcodeStatus as 'pending' | 'done' | 'error' | null) ?? undefined,
+        transcodeError:  extra?.transcodeError ?? undefined,
       };
     });
     return NextResponse.json({ content, totalBytes });
