@@ -25,6 +25,35 @@ type PlayEventInput = {
   durationMs:  number;
 };
 
+type TelemetryInput = {
+  cpuTempC?:        number;
+  freeStorageMb?:   number;
+  androidVersion?:  string;
+  appVersion?:      string;
+  // Freeze diagnostics — see Device.playbackAliveAt
+  playbackAliveMs?: number;  // epoch ms of last playback advance
+  lastStallReason?: string;
+  lastStallMs?:     number;  // epoch ms of last detected decoder stall
+};
+
+/** Maps a telemetry payload onto Device columns. Shared by the telemetry-only and
+ *  events+telemetry paths so the two can't drift. */
+function telemetryToDeviceData(t: TelemetryInput) {
+  const aliveAt = typeof t.playbackAliveMs === 'number' && t.playbackAliveMs > 0
+    ? new Date(t.playbackAliveMs) : null;
+  const stallAt = typeof t.lastStallMs === 'number' && t.lastStallMs > 0
+    ? new Date(t.lastStallMs) : null;
+  return {
+    ...(typeof t.cpuTempC      === 'number' ? { cpuTempC: t.cpuTempC, cpuTempUpdatedAt: new Date() } : {}),
+    ...(typeof t.freeStorageMb === 'number' ? { freeStorageMb: t.freeStorageMb } : {}),
+    ...(t.androidVersion  ? { androidVersion:  t.androidVersion  } : {}),
+    ...(t.appVersion      ? { appVersion:      t.appVersion      } : {}),
+    ...(aliveAt           ? { playbackAliveAt: aliveAt           } : {}),
+    ...(t.lastStallReason ? { lastStallReason: t.lastStallReason } : {}),
+    ...(stallAt           ? { lastStallAt:     stallAt           } : {}),
+  };
+}
+
 async function authenticate(req: NextRequest) {
   const auth  = req.headers.get('authorization') ?? '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
@@ -61,7 +90,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = await req.json() as { events: PlayEventInput[]; telemetry?: { cpuTempC?: number; freeStorageMb?: number; androidVersion?: string; appVersion?: string } };
+    const body = await req.json() as { events: PlayEventInput[]; telemetry?: TelemetryInput };
     const { events, telemetry } = body;
     if (!Array.isArray(events) || events.length === 0) {
       // Allow empty event batches if telemetry-only heartbeat
@@ -70,10 +99,7 @@ export async function POST(req: NextRequest) {
           where: { id: device.id },
           data:  {
             lastSeen: new Date(), status: 'ONLINE',
-            ...(typeof telemetry.cpuTempC      === 'number' ? { cpuTempC: telemetry.cpuTempC, cpuTempUpdatedAt: new Date() } : {}),
-            ...(typeof telemetry.freeStorageMb === 'number' ? { freeStorageMb: telemetry.freeStorageMb } : {}),
-            ...(telemetry.androidVersion ? { androidVersion: telemetry.androidVersion } : {}),
-            ...(telemetry.appVersion     ? { appVersion:     telemetry.appVersion     } : {}),
+            ...telemetryToDeviceData(telemetry),
           },
         }).catch(() => { /* telemetry columns may not exist yet */ });
         const envelope = await respond({ accepted: 0, telemetry: true }, { route, request: { correlationId, eventsCount: 0 }, outcome: 'success', policyFlags: ['telemetry_only'], startedAtMs });
@@ -156,10 +182,7 @@ export async function POST(req: NextRequest) {
       where: { id: device.id },
       data:  {
         lastSeen: new Date(), status: 'ONLINE',
-        ...(typeof telemetry?.cpuTempC      === 'number' ? { cpuTempC: telemetry.cpuTempC, cpuTempUpdatedAt: new Date() } : {}),
-        ...(typeof telemetry?.freeStorageMb === 'number' ? { freeStorageMb: telemetry.freeStorageMb } : {}),
-        ...(telemetry?.androidVersion ? { androidVersion: telemetry.androidVersion } : {}),
-        ...(telemetry?.appVersion     ? { appVersion:     telemetry.appVersion     } : {}),
+        ...(telemetry ? telemetryToDeviceData(telemetry) : {}),
       },
     }).catch(() => { /* telemetry columns may not exist yet */ });
 
