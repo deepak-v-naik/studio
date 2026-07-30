@@ -75,9 +75,16 @@ The only separate codebase is **ALIVE-Player** (Kotlin Android TV APK).
 - Admin routes: `admin-password` header checked against `ADMIN_PASSWORD` env var
 - Brands/admin: next-auth session via `auth()`
 
-**R2 uploads:**
-- Always route through `/api/admin/r2-upload` (server-side proxy) — never direct browser PUT to presigned URL (R2 CORS blocks it)
-- `maxDuration = 60` on the upload route for large files
+**R2 uploads — two paths, pick by size:**
+- **Admin content (images/video, up to 100 MB): presigned PUT, browser → R2 directly.**
+  `GET /api/admin/r2-upload?key=&type=` returns `uploadUrl`, then the browser PUTs the
+  bytes. Required because Vercel caps a function's *request body* at ~4.5 MB on every
+  plan — anything proxied through a function cannot exceed it, and no plan upgrade helps.
+  Depends on bucket CORS allowing PUT from the admin origin — see `docs/R2_CORS.md`.
+  The signature covers `Content-Type`, so the PUT must send the same value that was signed.
+- **Small server-side uploads (KYC docs etc.): `POST /api/admin/r2-upload` proxy.** Stays
+  as-is — phone photos are far under the cap and this needs no CORS.
+- `maxDuration = 60` on the proxy route
 
 **Redis:**
 - Never `const kv = new Redis(...)` at module level — breaks SSG

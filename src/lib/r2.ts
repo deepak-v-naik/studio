@@ -30,8 +30,12 @@ export async function putObject(objectKey: string, body: Buffer | Uint8Array, co
   await r2Client().send(cmd);
 }
 
-// Kept for other uses (device content uploads etc.)
-export async function signedUploadUrl(objectKey: string, contentType: string, expiresInSeconds = 600): Promise<string> {
+// Primary path for admin content uploads: the browser PUTs straight to R2 so large
+// files bypass the ~4.5 MB Vercel serverless request-body cap. Requires bucket CORS to
+// allow PUT from the admin origin (docs/R2_CORS.md).
+// Default expiry is generous because a 100 MB clip over a kirana store's uplink can
+// legitimately take many minutes, and expiry is enforced at PUT start.
+export async function signedUploadUrl(objectKey: string, contentType: string, expiresInSeconds = 3600): Promise<string> {
   const cmd = new PutObjectCommand({
     Bucket:      BUCKET(),
     Key:         objectKey,

@@ -103,8 +103,12 @@ export default function ContentTab() {
   const handleFiles = async (files: FileList | null) => {
     if (!files?.length) return;
 
-    // Vercel serverless body limit is ~4.5 MB. Anything over fails with 413.
-    const MAX_MB = 4;
+    // Uploads go browser -> R2 directly via a presigned PUT, so the ~4.5 MB Vercel
+    // serverless request-body cap doesn't apply (it only binds traffic that passes
+    // through a function, and the bytes no longer do). This ceiling is ours to pick:
+    // 100 MB covers a 30s 4K clip. Requires CORS on the R2 bucket to allow PUT from
+    // the admin origin — see docs/R2_CORS.md.
+    const MAX_MB = 100;
     const pw = typeof window !== 'undefined' ? (sessionStorage.getItem('alive_admin_pw') ?? '') : '';
 
     for (const file of Array.from(files)) {
@@ -141,11 +145,22 @@ export default function ContentTab() {
           md5:       hash,
         });
 
-        // Step 2: server-side proxy upload to R2 (avoids CORS with direct R2 PUT)
-        const form = new FormData();
-        form.append('file', file);
-        form.append('key', objectKey);
+        // Step 2: ask the server to presign a PUT for this exact key + content type.
+        // The signature covers Content-Type, so the PUT below must send the identical
+        // value or R2 rejects it as a signature mismatch.
+        const contentType = file.type || 'application/octet-stream';
+        const signRes = await fetch(
+          `/api/admin/r2-upload?key=${encodeURIComponent(objectKey)}&type=${encodeURIComponent(contentType)}`,
+          { headers: pw ? { 'admin-password': pw } : {} },
+        );
+        if (!signRes.ok) {
+          const body = await signRes.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? `Could not start upload (server returned ${signRes.status}).`);
+        }
+        const { uploadUrl } = await signRes.json() as { uploadUrl: string };
 
+        // Step 3: PUT the bytes straight to R2. They never traverse a serverless
+        // function, so the ~4.5 MB request-body cap doesn't apply.
         const xhr = new XMLHttpRequest();
         xhr.upload.onprogress = (ev) => {
           if (!ev.lengthComputable) return;
@@ -156,22 +171,22 @@ export default function ContentTab() {
           xhr.onload = () => {
             if (xhr.status < 300) { resolve(); return; }
             const mb = (file.size / (1024 * 1024)).toFixed(1);
-            if (xhr.status === 413) {
-              reject(new Error(`File too large (${mb} MB). Server allows up to ~4.5 MB per upload on this plan. Compress the video or try a smaller file.`));
+            if (xhr.status === 403) {
+              reject(new Error(`R2 rejected the upload (403). The signed link may have expired — try again. If it keeps failing, check the bucket's CORS rules (docs/R2_CORS.md).`));
               return;
             }
-            if (xhr.status === 401) { reject(new Error('Session expired — please reload the admin page and sign in again.')); return; }
-            if (xhr.status === 504 || xhr.status === 502) { reject(new Error(`Upload timed out (${mb} MB). Try a smaller file or check your internet connection.`)); return; }
-            try {
-              const body = JSON.parse(xhr.responseText) as { error?: string };
-              reject(new Error(body.error ?? `Couldn't upload "${file.name}" (server returned ${xhr.status}).`));
-            } catch { reject(new Error(`Couldn't upload "${file.name}" (server returned ${xhr.status}).`)); }
+            reject(new Error(`Couldn't upload "${file.name}" (${mb} MB) — R2 returned ${xhr.status}.`));
           };
-          xhr.onerror = () => reject(new Error('Upload failed — check your internet connection or try a smaller file.'));
+          // A direct-to-R2 PUT that fails CORS preflight surfaces here as a generic
+          // network error with no status, so name that cause explicitly.
+          xhr.onerror = () => reject(new Error(
+            'Upload failed before reaching R2 — usually missing/incorrect bucket CORS rules ' +
+            '(needs PUT allowed from this origin, see docs/R2_CORS.md), otherwise a connection drop.',
+          ));
           xhr.onabort = () => reject(new Error('Upload cancelled.'));
-          xhr.open('POST', '/api/admin/r2-upload');
-          if (pw) xhr.setRequestHeader('admin-password', pw);
-          xhr.send(form);
+          xhr.open('PUT', uploadUrl);
+          xhr.setRequestHeader('Content-Type', contentType);
+          xhr.send(file);
         });
 
         setUploads((u) => u.map((x, i) => i === idx ? { ...x, progress: 100, done: true } : x));
