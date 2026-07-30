@@ -4,7 +4,10 @@
 //   - Static assets → cache-first (JS, CSS, images, fonts)
 //   - Navigation   → network-first, fall back to /offline if totally offline
 
-const CACHE     = 'alive-partner-v1';
+// Bumped v1 -> v2 deliberately. The activate handler deletes every cache whose name
+// isn't CACHE, so changing this name purges the stale Next.js bundles that were
+// causing ChunkLoadError on already-affected browsers — they self-heal on next load.
+const CACHE     = 'alive-partner-v2';
 const PRECACHE  = [
   '/store-dashboard',
   '/store',
@@ -44,15 +47,27 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Static assets (Next.js /_next/) — cache-first
-  if (url.pathname.startsWith('/_next/static/') || url.pathname.startsWith('/icons/')) {
-    e.respondWith(cacheFirst(request));
+  // Next.js RSC payloads and any HTML — ALWAYS network-first, never served stale.
+  // This is what caused ChunkLoadError: an RSC payload fell through to
+  // stale-while-revalidate below, so a client-side navigation could be handed a cached
+  // payload from an earlier deployment. That payload names chunk filenames by content
+  // hash, and after a redeploy those files no longer exist on the server — the lazy
+  // import then 404s and the panel never mounts. Fresh RSC/HTML always references
+  // chunks that currently exist, which is also what makes cache-first safe below.
+  const isRsc =
+    url.searchParams.has('_rsc') ||
+    request.headers.get('RSC') === '1' ||
+    request.destination === 'document' ||
+    (request.headers.get('Accept') || '').includes('text/html');
+  if (isRsc || request.mode === 'navigate') {
+    e.respondWith(navigationHandler(request));
     return;
   }
 
-  // HTML navigation — network-first with offline fallback
-  if (request.mode === 'navigate') {
-    e.respondWith(navigationHandler(request));
+  // Static assets (Next.js /_next/) — cache-first. Safe because these URLs are
+  // content-hashed and immutable: a given URL's bytes never change.
+  if (url.pathname.startsWith('/_next/static/') || url.pathname.startsWith('/icons/')) {
+    e.respondWith(cacheFirst(request));
     return;
   }
 
@@ -96,7 +111,12 @@ async function staleWhileRevalidate(req) {
   const cached = await caches.match(req);
   const fetchPromise = fetch(req).then((res) => {
     if (res.ok) {
-      caches.open(CACHE).then((c) => c.put(req, res.clone()));
+      // Clone SYNCHRONOUSLY, before the response is returned and its body consumed.
+      // Cloning inside the async caches.open() callback ran after the body had already
+      // been handed to the page, which threw "Failed to execute 'clone' on 'Response':
+      // Response body is already used" and left the cache write silently broken.
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
     }
     return res;
   }).catch(() => cached);
