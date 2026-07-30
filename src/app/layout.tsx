@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { NetworkBanner } from '@/components/errors/network-banner';
 import { SessionExpiredModal } from '@/components/errors/session-expired-modal';
 import { PwaRegister } from '@/components/pwa-register';
+import ChunkErrorRecovery from '@/components/chunk-error-recovery';
 
 export const metadata: Metadata = {
   title: 'ALIVE — In-store advertising for Indian kirana stores',
@@ -50,6 +51,7 @@ export default function RootLayout({
           className={cn('min-h-screen bg-background font-sans antialiased')}
           style={{ fontFamily: '"Manrope", system-ui, sans-serif' }}
         >
+          <ChunkErrorRecovery />
           <PwaRegister />
           <NetworkBanner />
           <SessionExpiredModal />
