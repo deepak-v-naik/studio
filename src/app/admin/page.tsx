@@ -1281,9 +1281,10 @@ function Dashboard() {
   const [adminPw,     setAdminPw]     = useState('');
   const [liveCount,   setLiveCount]   = useState(0);
   const [alertCount,  setAlertCount]  = useState(0);
+  const [tickerStats, setTickerStats] = useState<OpsStats | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Load theme from localStorage + prefetch alert count
+  // Load theme from localStorage + prefetch alert count + live network stats for the ticker
   useEffect(() => {
     try {
       const saved = localStorage.getItem('alive-theme') as 'light' | 'dark' | null;
@@ -1297,12 +1298,17 @@ function Dashboard() {
       try { return JSON.parse(localStorage.getItem('alive_admin_dismissed_alerts') ?? '[]') as string[]; }
       catch { return []; }
     })();
+    const now = new Date().toISOString();
     Promise.all([
       fetch('/api/devices',         { headers: h }).then((r) => r.ok ? r.json() : { devices: [] }),
-      fetch('/api/campaigns/admin', { headers: h }).then((r) => r.ok ? r.json() : []),
+      fetch('/api/schedules',       { headers: h }).then((r) => r.ok ? r.json() : { schedules: [] }),
+      fetch('/api/content',         { headers: h }).then((r) => r.ok ? r.json() : { content: [], totalBytes: 0 }),
       fetch('/api/stores/save',     { headers: h }).then((r) => r.ok ? r.json() : []),
-    ]).then(([devR, cmR, stR]) => {
+      fetch('/api/campaigns/admin', { headers: h }).then((r) => r.ok ? r.json() : []),
+    ]).then(([devR, schR, ctR, stR, cmR]) => {
       const devs = (devR.devices ?? []) as { id: string; status: string }[];
+      const schs = (schR.schedules ?? []) as { startAt: string; endAt: string }[];
+      const cts  = (ctR.content ?? []) as unknown[];
       const cms  = Array.isArray(cmR) ? cmR : [] as { paymentId?: string; status?: string }[];
       const sts  = Array.isArray(stR) ? stR : (stR?.data ?? []) as { id: string; createdAt: string; onboardingStage?: string }[];
       let count = 0;
@@ -1319,6 +1325,21 @@ function Dashboard() {
       }
       setAlertCount(count);
       setLiveCount(devs.filter((d) => d.status === 'ONLINE').length);
+      setTickerStats({
+        screens:   {
+          online:  devs.filter((d) => d.status === 'ONLINE').length,
+          offline: devs.filter((d) => d.status === 'OFFLINE').length,
+          pending: pendingDevs.length,
+          total:   devs.length,
+        },
+        schedules: {
+          active: schs.filter((s) => s.startAt <= now && s.endAt >= now).length,
+          total:  schs.length,
+        },
+        content:   { count: cts.length, totalMB: ctR.totalBytes ? ctR.totalBytes / (1024 * 1024) : 0 },
+        stores:    { total: sts.length, live: sts.filter((s: { onboardingStage?: string }) => s.onboardingStage === 'live').length },
+        campaigns: { total: cms.length, paid: cms.filter((c: { paymentId?: string }) => c.paymentId && c.paymentId !== 'pending').length },
+      });
     }).catch(() => {});
   }, []);
 
@@ -1381,7 +1402,7 @@ function Dashboard() {
           setTheme={setTheme}
           unread={alertCount}
         />
-        <Ticker stats={null} />
+        <Ticker stats={tickerStats} />
 
         <div className="page">
           <AnimatePresence mode="wait">

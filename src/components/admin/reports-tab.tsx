@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { Loader2, Download, AlertCircle, PlayCircle, Filter, BarChart3, FileBarChart2, FileText, Activity, MapPin } from 'lucide-react';
+import { Loader2, Download, AlertCircle, PlayCircle, Filter, BarChart3 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { getEvents, getEventsExportUrl, getDevices, type PlayEvent, type Device } from '@/lib/backend-api';
@@ -34,23 +34,6 @@ function SectionLabel({ n, label }: { n: number; label: string }) {
     </div>
   );
 }
-
-const SAVED_REPORTS = [
-  { name: 'Pilot uplift · 412 stores · 12 weeks',   date: 'Generated weekly · Nielsen partnership',        Icon: FileBarChart2 },
-  { name: 'Brand recall study · Parle-G',            date: 'May 18 · matched-control sample n=412',         Icon: FileText      },
-  { name: 'Kirana payout ledger · April 2026',       date: 'Released May 1 · UPI / NEFT receipts',          Icon: BarChart3     },
-  { name: 'Slot utilisation · 7 AM – 9 PM',          date: 'Updated daily · Network 027',                   Icon: Activity      },
-  { name: 'Network expansion plan · Q3 2026',        date: 'Bengaluru, Hyderabad, Chennai readiness',       Icon: MapPin        },
-];
-
-const ACTIVITY_FEED = [
-  { text: 'Parle-G Monsoon Bites went live on 386 screens',           time: '12s ago',   color: 'red'   },
-  { text: '₹64,200 released to 84 partners via UPI',                   time: '8 min ago', color: 'green' },
-  { text: 'New partner onboarded — Hegde Kirana, Yeyyadi',            time: '21 min ago',color: ''      },
-  { text: '"Good Day Wave 7" approved for 312 screens',               time: '44 min ago',color: 'green' },
-  { text: '2 screens offline in Kadri Kambla — field team dispatched',time: '1 hr ago',  color: 'red'   },
-  { text: 'Pilot cohort 412 stores · +20% average sales lift confirmed', time: '2 hr ago', color: '' },
-];
 
 export default function ReportsTab() {
   const [events,  setEvents]  = useState<PlayEvent[]>([]);
@@ -141,7 +124,7 @@ export default function ReportsTab() {
           <em className="not-italic text-primary">Quantifiably</em> better, in writing.
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Every campaign verified by play event. 20% sales lift · 74% brand recall · 2× stock velocity. Pull the report, share with your team.
+          Every campaign verified by play event, reported straight from the screen.
         </p>
       </div>
 
@@ -160,44 +143,8 @@ export default function ReportsTab() {
         ))}
       </div>
 
-      {/* Saved reports + activity feed */}
-      <SectionLabel n={1} label="Saved reports" />
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 rounded-xl border border-border bg-card px-5 py-2">
-          {SAVED_REPORTS.map((r) => (
-            <div key={r.name} className="admin-report-row">
-              <div className="admin-report-icon"><r.Icon className="h-4 w-4" /></div>
-              <div className="flex-1 min-w-0">
-                <div className="admin-report-name truncate">{r.name}</div>
-                <div className="admin-report-date">{r.date}</div>
-              </div>
-              <a href={csvUrl} download className="shrink-0 flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-semibold text-muted-foreground hover:text-primary hover:border-primary/30 transition-colors">
-                <Download className="h-3 w-3" /> CSV
-              </a>
-            </div>
-          ))}
-        </div>
-        <div className="rounded-xl border border-border bg-card px-5 py-3">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-semibold text-foreground">Activity</p>
-            <p className="admin-font-mono text-[9px] text-muted-foreground/60">Network 027</p>
-          </div>
-          <div className="admin-act">
-            {ACTIVITY_FEED.map((a, i) => (
-              <div key={i} className="admin-act-item">
-                <div className={`admin-act-icon${a.color ? ` admin-act-icon--${a.color}` : ''}`}>
-                  <Activity className="h-3 w-3" />
-                </div>
-                <div className="admin-act-text">{a.text}</div>
-                <span className="admin-act-time">{a.time}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
       {/* Proof-of-play event filters */}
-      <SectionLabel n={2} label="Proof-of-play events" />
+      <SectionLabel n={1} label="Proof-of-play events" />
       <div className="rounded-xl border border-border bg-card p-4 flex flex-wrap items-end gap-2">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground mr-1">
           <Filter className="h-3.5 w-3.5" />
