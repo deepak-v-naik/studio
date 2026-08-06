@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Loader2, Download, AlertCircle, PlayCircle, Filter, BarChart3 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { getEvents, getEventsExportUrl, getDevices, type PlayEvent, type Device } from '@/lib/backend-api';
+import { getEvents, downloadEventsCsv, getDevices, type PlayEvent, type Device } from '@/lib/backend-api';
 
 function fmtHours(ms: number): string {
   if (ms < 60_000)       return `${Math.round(ms / 1000)}s`;
@@ -99,11 +99,13 @@ export default function ReportsTab() {
     return Array.from(m.values()).sort((a, b) => b.plays - a.plays);
   }, [events]);
 
-  const csvUrl = getEventsExportUrl({
-    ...(tagFilter ? { tag: tagFilter } : {}),
-    ...(fromDate  ? { from: fromDate } : {}),
-    ...(toDate    ? { to: toDate }     : {}),
-  });
+  const handleExportCsv = () => {
+    downloadEventsCsv({
+      ...(tagFilter ? { tag: tagFilter } : {}),
+      ...(fromDate  ? { from: fromDate } : {}),
+      ...(toDate    ? { to: toDate }     : {}),
+    }).catch((e: Error) => setError(e.message));
+  };
 
   if (error) return (
     <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-6 flex gap-3">
@@ -156,10 +158,10 @@ export default function ReportsTab() {
           className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-white hover:bg-primary/90 transition-colors">
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Filter className="h-3.5 w-3.5" />} Apply
         </button>
-        <a href={csvUrl} download="alive-pop-report.csv"
+        <button onClick={handleExportCsv}
           className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-4 py-2 text-xs font-bold text-foreground hover:border-primary/40 transition-colors">
           <Download className="h-3.5 w-3.5 text-primary" /> CSV
-        </a>
+        </button>
       </div>
 
       {loading ? (

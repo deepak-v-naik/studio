@@ -234,18 +234,41 @@ export const searchStores = (params?: { q?: string; city?: string }) => {
 
 // ─── Play Events (POP) ────────────────────────────────────────────────────────
 
-export const getEvents = (params?: Record<string, string>) => {
-  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  return apiFetch<{ events: PlayEvent[]; nextCursor: string | null }>(`/api/events${qs}`)
-    .then((r) => r.events);
+// GET /api/events paginates (default page size 500, capped 2000) — follow nextCursor
+// until exhausted so callers always get the full matching set, not just the first page.
+export const getEvents = async (params?: Record<string, string>): Promise<PlayEvent[]> => {
+  const all: PlayEvent[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const qs = new URLSearchParams({ ...params, limit: '2000', ...(cursor ? { cursor } : {}) }).toString();
+    const { events, nextCursor } = await apiFetch<{ events: PlayEvent[]; nextCursor: string | null }>(`/api/events?${qs}`);
+    all.push(...events);
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+  return all;
 };
 
-export function getEventsExportUrl(params?: Record<string, string>): string {
-  const base = '/api/events/export/csv';
-  if (!params || Object.keys(params).length === 0) return base;
-  const pw = typeof window !== 'undefined' && (process.env.NEXT_PUBLIC_ADMIN_PASSWORD ?? '');
-  const p  = { ...params, ...(pw ? { 'admin-password': pw } : {}) };
-  return `${base}?${new URLSearchParams(p).toString()}`;
+// /api/events/export/csv only checks the admin-password HEADER (see route.ts), so a
+// plain <a href> download can never authenticate — the browser never attaches custom
+// headers to a bare navigation. Fetch with the header instead and trigger the download
+// from the resulting blob.
+export async function downloadEventsCsv(params?: Record<string, string>, filename = 'alive-pop-report.csv'): Promise<void> {
+  const qs  = params ? '?' + new URLSearchParams(params).toString() : '';
+  const res = await fetch(`/api/events/export/csv${qs}`, { headers: adminHeaders(), credentials: 'same-origin' });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => `HTTP ${res.status}`);
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ─── Content ─────────────────────────────────────────────────────────────────
