@@ -141,7 +141,9 @@ curl https://wearealive.in/api/device/plan \
       "md5": "d41d8cd98f00b204e9800998ecf8427e",
       "type": "VIDEO",
       "durationMs": 30000,
-      "order": 1
+      "order": 1,
+      "hevcUrl": "https://r2.wearealive.in/content/brand-promo-30s-hevc.mp4",
+      "hevcMd5": "5d41402abc4b2a76b9719d911017c592"
     },
     {
       "contentId": "clx7k2m0f0000cnt5678efgh",
@@ -211,6 +213,16 @@ curl https://wearealive.in/api/device/plan \
 | `type` | `"IMAGE" \| "VIDEO"` | Media type |
 | `durationMs` | `number` | Display duration in milliseconds |
 | `order` | `number` | Sort order for playlist (ascending) |
+| `hevcUrl` | `string` (optional) | Download URL for an HEVC/H.265 rendition of the same video, when one exists. Present only for `VIDEO` items that have been (re-)transcoded since this field was added. |
+| `hevcMd5` | `string` (optional) | MD5 hex of `hevcUrl`'s file. Always present alongside `hevcUrl`. |
+
+**Choosing between `url` and `hevcUrl`:** most devices should just use `url`/`md5` (H.264 —
+universally hardware-decodable across the fleet). Only prefer `hevcUrl`/`hevcMd5` when the
+device's hardware H.264 decoder is unreliable (so playback would otherwise fall back to a
+CPU-bound software decoder) *and* the device has a working hardware HEVC decoder — e.g. by
+probing `MediaCodecList`/`MediaCodecInfo.isHardwareAccelerated()` for both codecs at runtime,
+the way `DecoderCapabilities.preferHevc()` does in the reference Kotlin client. This is a
+per-device runtime decision, not something the server can determine from the request.
 
 **TimelineSlot fields**
 

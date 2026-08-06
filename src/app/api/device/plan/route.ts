@@ -208,11 +208,13 @@ export async function GET(req: NextRequest) {
                 order:      true,
                 content: {
                   select: {
-                    id:         true,
-                    objectKey:  true,
-                    md5:        true,
-                    type:       true,
-                    durationMs: true,
+                    id:            true,
+                    objectKey:     true,
+                    md5:           true,
+                    type:          true,
+                    durationMs:    true,
+                    hevcObjectKey: true,
+                    hevcMd5:       true,
                   },
                 },
               },
@@ -253,6 +255,8 @@ export async function GET(req: NextRequest) {
       type:       item.content.type,
       durationMs: item.durationMs,
       order:      item.order,
+      hevcUrl:    item.content.hevcObjectKey ? publicUrl(item.content.hevcObjectKey) : undefined,
+      hevcMd5:    item.content.hevcMd5 ?? undefined,
     })) ?? [];
 
     // Build the full timeline for the 72-hr window
@@ -337,7 +341,7 @@ export async function GET(req: NextRequest) {
             select: {
               durationMs: true,
               order:      true,
-              content:    { select: { id: true, objectKey: true, md5: true, type: true, durationMs: true } },
+              content:    { select: { id: true, objectKey: true, md5: true, type: true, durationMs: true, hevcObjectKey: true, hevcMd5: true } },
             },
             orderBy: { order: 'asc' },
           },
@@ -351,6 +355,8 @@ export async function GET(req: NextRequest) {
         type:       item.content.type,
         durationMs: item.durationMs,
         order:      item.order,
+        hevcUrl:    item.content.hevcObjectKey ? publicUrl(item.content.hevcObjectKey) : undefined,
+        hevcMd5:    item.content.hevcMd5 ?? undefined,
       })) ?? [];
     }
 

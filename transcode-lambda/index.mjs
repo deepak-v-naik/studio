@@ -18,7 +18,12 @@
 //      already cached the original under its old hash is unaffected — it'll pick up
 //      the new key on its next plan fetch, verify against the new hash, and download
 //      fresh, exactly like any other content update).
-//   4. Calls back to the studio app with the result so it can update the Content row.
+//   4. Best-effort: also re-encodes to HEVC/H.265 at ~half the H.264 bitrate and
+//      uploads it as a second rendition. Some fleet devices have a broken hardware
+//      AVC decoder (falls back to CPU-bound software decode) but a working hardware
+//      HEVC decoder — the player prefers this rendition on those devices. Failure here
+//      doesn't fail the job; the H.264 rendition is always the required baseline.
+//   5. Calls back to the studio app with the result(s) so it can update the Content row.
 //
 // Required Lambda configuration (see ../TRANSCODE_LAMBDA.md for full deploy steps):
 //   Memory:    >= 2048 MB (more memory = more CPU in Lambda, needed for ffmpeg)
@@ -71,6 +76,7 @@ export const handler = async (event) => {
   const { contentId, inputUrl } = event;
   const tmpIn = `/tmp/${randomUUID()}-in`;
   const tmpOut = `/tmp/${randomUUID()}-out.mp4`;
+  const tmpOutHevc = `/tmp/${randomUUID()}-out-hevc.mp4`;
 
   try {
     if (!contentId || !inputUrl) throw new Error('contentId and inputUrl are required');
@@ -116,9 +122,40 @@ export const handler = async (event) => {
       ContentType: 'video/mp4',
     }));
 
+    // 5. Best-effort second rendition: same content re-encoded as HEVC/H.265, at
+    //    roughly half the H.264 bitrate (HEVC is ~2x more efficient at equivalent
+    //    quality). Some fleet devices have a broken hardware AVC decoder but a working
+    //    hardware HEVC one — this rendition lets those play HD content in hardware
+    //    instead of falling back to a CPU-bound software AVC decoder. Never blocks the
+    //    required H.264 rendition above: on failure, just log and move on.
+    let hevcResult;
+    try {
+      await run(ffmpegPath.path, [
+        '-y', '-i', tmpIn,
+        '-c:v', 'libx265', '-tag:v', 'hvc1', '-profile:v', 'main', '-pix_fmt', 'yuv420p',
+        '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+        '-r', '30', '-b:v', '3M', '-maxrate', '4M', '-bufsize', '6M',
+        '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+        tmpOutHevc,
+      ]);
+      const hevcBytes = await readFile(tmpOutHevc);
+      const hevcMd5 = createHash('md5').update(hevcBytes).digest('hex');
+      const hevcObjectKey = `content/${contentId}-transcoded-hevc-${Date.now()}.mp4`;
+      await r2Client().send(new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET,
+        Key: hevcObjectKey,
+        Body: hevcBytes,
+        ContentType: 'video/mp4',
+      }));
+      hevcResult = { hevcObjectKey, hevcMd5, hevcSizeBytes: hevcBytes.length };
+    } catch (err) {
+      console.error('HEVC transcode failed (non-fatal, H.264 rendition still used):', err);
+    }
+
     await callback({
       contentId, status: 'done', objectKey, md5,
       sizeBytes: outBytes.length, durationMs, width, height,
+      ...hevcResult,
     });
   } catch (err) {
     console.error('Transcode failed:', err);
@@ -126,5 +163,6 @@ export const handler = async (event) => {
   } finally {
     await unlink(tmpIn).catch(() => {});
     await unlink(tmpOut).catch(() => {});
+    await unlink(tmpOutHevc).catch(() => {});
   }
 };

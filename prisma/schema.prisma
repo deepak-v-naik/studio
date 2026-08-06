@@ -401,6 +401,16 @@ model Content {
   transcodeStatus String? // null | 'pending' | 'done' | 'error'
   transcodeError  String?
 
+  // Optional second rendition, same content re-encoded as HEVC/H.265. Populated
+  // best-effort by the transcode Lambda alongside the H.264 rendition above. Devices
+  // whose hardware AVC decoder is unreliable (and fall back to software H.264 decode)
+  // prefer this rendition when present, since it can use a working hardware HEVC
+  // decoder instead. Absent for content that hasn't been (re-)transcoded since this
+  // was added, or where the HEVC pass failed.
+  hevcObjectKey String? @unique
+  hevcMd5       String?
+  hevcSizeBytes BigInt?
+
   items PlaylistItem[]
 
   @@index([uploadedById])
