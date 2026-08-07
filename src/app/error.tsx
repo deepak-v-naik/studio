@@ -10,7 +10,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
     fetch('/api/telemetry', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ level: 'error', errorClass: error.name, message: error.message, digest: error.digest, source: 'next-error-page' }),
+      body: JSON.stringify({ level: 'error', errorClass: error.name, message: error.message, digest: error.digest, source: 'next-error-page', route: typeof window !== 'undefined' ? window.location.pathname : undefined }),
     }).catch(() => {});
   }, [error]);
 

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, Trash2, Upload, ImageIcon, Store, BarChart3, FileImage,
   Phone, MapPin, CheckCircle2, Clock, X, MessageCircle, ExternalLink,
-  IndianRupee, Eye, Package, Ticket, Star,
+  IndianRupee, Eye, Package, Ticket, Star, Copy,
   Tv2, CalendarClock, FileBarChart2, Activity,
   ChevronRight, LogOut, LayoutDashboard, LayoutGrid, Images, Map, Layers,
   // New icons for the redesign
@@ -358,6 +358,49 @@ function openAsPartner(s: StoreReg) {
   window.open('/store-dashboard', '_blank');
 }
 
+function PremiumLinkCard() {
+  const [data, setData] = useState<{ configured: boolean; link: string | null; monthlyRupees: number } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const pw = sessionStorage.getItem(SS_PW) ?? '';
+    fetch('/api/admin/premium-link', { headers: { 'admin-password': pw } })
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setData({ configured: false, link: null, monthlyRupees: 1000 }));
+  }, []);
+
+  if (!data) return null;
+
+  const copy = () => {
+    if (!data.link) return;
+    navigator.clipboard.writeText(data.link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-center gap-2 min-w-0">
+        <Star className="h-4 w-4 text-amber-500 shrink-0" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground">Premium store onboarding link · ₹{data.monthlyRupees}/mo</p>
+          {data.configured ? (
+            <p className="text-xs text-muted-foreground truncate">{data.link}</p>
+          ) : (
+            <p className="text-xs text-red-600">Not configured — set PREMIUM_SIGNUP_KEY in the Vercel env vars.</p>
+          )}
+        </div>
+      </div>
+      {data.configured && (
+        <button onClick={copy} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted shrink-0">
+          <Copy className="h-3.5 w-3.5" /> {copied ? 'Copied' : 'Copy link'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function StoresPanel() {
   const [stores,   setStores]   = useState<StoreReg[]>([]);
   const [loading,  setLoading]  = useState(true);
@@ -444,6 +487,8 @@ function StoresPanel() {
           </div>
         ))}
       </div>
+
+      <PremiumLinkCard />
 
       <input type="search" placeholder="Search by name, owner, city, phone, referral code…" value={search} onChange={(e) => setSearch(e.target.value)} className={inp} />
 

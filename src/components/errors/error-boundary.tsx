@@ -28,7 +28,7 @@ export class ErrorBoundary extends Component<Props, State> {
     fetch('/api/telemetry', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ level: 'error', errorClass: error.name, message: error.message, source: 'error-boundary' }),
+      body: JSON.stringify({ level: 'error', errorClass: error.name, message: error.message, source: 'error-boundary', route: typeof window !== 'undefined' ? window.location.pathname : undefined }),
     }).catch(() => {});
   }
 
