@@ -22,7 +22,6 @@ export default auth(function middleware(req: NextRequest) {
 // Keeping the matcher tight reduces edge invocations and bundle pressure.
 export const config = {
   matcher: [
-    '/store-dashboard/:path*',
     '/dashboard/:path*',
     // Clerk cleanup — remove once all traffic has migrated
     '/(.*)?__clerk_handshake(.*)',
