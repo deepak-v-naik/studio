@@ -10,9 +10,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { publicUrl } from '@/lib/r2';
 import crypto from 'crypto';
 import { getOrCreateCorrelationId, hashStack, recordError } from '@/lib/telemetry';
+import { resolvePlaylistTree } from '@/lib/playlist-nesting';
 
 async function authenticate(req: NextRequest) {
   const auth  = req.headers.get('authorization') ?? '';
@@ -199,29 +199,9 @@ export async function GET(req: NextRequest) {
         recurrence: true,
         dailyStart: true,
         dailyEnd:   true,
-        playlist: {
-          select: {
-            transition: true,
-            items: {
-              select: {
-                durationMs: true,
-                order:      true,
-                content: {
-                  select: {
-                    id:            true,
-                    objectKey:     true,
-                    md5:           true,
-                    type:          true,
-                    durationMs:    true,
-                    hevcObjectKey: true,
-                    hevcMd5:       true,
-                  },
-                },
-              },
-              orderBy: { order: 'asc' },
-            },
-          },
-        },
+        // Items come from resolvePlaylistTree below (handles nested playlists);
+        // only the playlist-level transition is needed here.
+        playlist: { select: { transition: true } },
       },
       orderBy: [{ priority: 'desc' }, { startAt: 'asc' }],
     });
@@ -247,17 +227,13 @@ export async function GET(req: NextRequest) {
     ) ?? resolvedSlots[0];
     const schedule = currentSlot ? scheduleMap.get(currentSlot.scheduleId) : undefined;
 
-    const items = schedule?.playlist.items.map((item) => ({
-      contentId:  item.content.id,
-      objectKey:  item.content.objectKey,
-      url:        publicUrl(item.content.objectKey),
-      md5:        item.content.md5,
-      type:       item.content.type,
-      durationMs: item.durationMs,
-      order:      item.order,
-      hevcUrl:    item.content.hevcObjectKey ? publicUrl(item.content.hevcObjectKey) : undefined,
-      hevcMd5:    item.content.hevcMd5 ?? undefined,
-    })) ?? [];
+    // Resolve the active playlist including any nested (Master → Internal) playlists.
+    // `items` stays the fully-flattened play order — identical semantics for legacy
+    // players and doubles as the download manifest; `nested` carries the tree for
+    // nesting-aware players (SMIL <seq>-in-<seq>: a nested playlist plays fully per visit).
+    const tree = schedule ? await resolvePlaylistTree(schedule.playlistId) : { nested: [], flat: [] };
+    const items  = tree.flat;
+    const nested = tree.nested;
 
     // Build the full timeline for the 72-hr window
     const timeline = resolvedSlots.map((slot) => {
@@ -331,33 +307,11 @@ export async function GET(req: NextRequest) {
     });
 
     // Xibo-style default layout: content to play when no schedule window is active,
-    // instead of the idle "waiting for content" screen.
+    // instead of the idle "waiting for content" screen. Flattened only — the fallback
+    // loops in full anyway, so nesting adds nothing here.
     let fallback: typeof items = [];
     if (playerConfig.fallbackPlaylistId) {
-      const fp = await db.playlist.findUnique({
-        where:  { id: playerConfig.fallbackPlaylistId },
-        select: {
-          items: {
-            select: {
-              durationMs: true,
-              order:      true,
-              content:    { select: { id: true, objectKey: true, md5: true, type: true, durationMs: true, hevcObjectKey: true, hevcMd5: true } },
-            },
-            orderBy: { order: 'asc' },
-          },
-        },
-      });
-      fallback = fp?.items.map((item) => ({
-        contentId:  item.content.id,
-        objectKey:  item.content.objectKey,
-        url:        publicUrl(item.content.objectKey),
-        md5:        item.content.md5,
-        type:       item.content.type,
-        durationMs: item.durationMs,
-        order:      item.order,
-        hevcUrl:    item.content.hevcObjectKey ? publicUrl(item.content.hevcObjectKey) : undefined,
-        hevcMd5:    item.content.hevcMd5 ?? undefined,
-      })) ?? [];
+      fallback = (await resolvePlaylistTree(playerConfig.fallbackPlaylistId)).flat;
     }
 
     // Hash the plan so the player can detect changes without re-downloading.
@@ -366,7 +320,7 @@ export async function GET(req: NextRequest) {
     // items -- a transition-only change is a real schedule update worth refreshing for.
     const planHash = crypto
       .createHash('md5')
-      .update(JSON.stringify({ items, timeline, overlays, transition, fallback, forceSyncAt: device.forceSyncAt?.toISOString() ?? null }))
+      .update(JSON.stringify({ items, nested, timeline, overlays, transition, fallback, forceSyncAt: device.forceSyncAt?.toISOString() ?? null }))
       .digest('hex');
 
     // Update device heartbeat
@@ -391,6 +345,7 @@ export async function GET(req: NextRequest) {
         downloadReadTimeoutMs:    playerConfig.downloadReadTimeoutMs,
       },
       items,
+      nested,
       timeline,
       overlays,
     });

@@ -32,6 +32,7 @@ export default function PlaylistsTab() {
   const [draft,      setDraft]      = useState<DraftItem[]>([]);
   const [transition, setTransition] = useState<Playlist['transition']>('NONE');
   const [saved,      setSaved]      = useState(false);
+  const [hasNested,  setHasNested]  = useState(false);
 
   // Drag-to-reorder refs
   const dragIdx     = useRef<number | null>(null);
@@ -49,12 +50,16 @@ export default function PlaylistsTab() {
 
   const selectPlaylist = (pl: Playlist) => {
     setSelected(pl.id);
-    setDraft(pl.items.map((i) => ({
-      contentId:  i.contentId,
+    // Playlists containing nested-playlist items (childPlaylistId set, content null) are
+    // read-only here: this editor saves via full replace, so editing one would silently
+    // drop the nested items it can't display. They stay editable via the API.
+    setHasNested(pl.items.some((i) => i.childPlaylistId != null));
+    setDraft(pl.items.filter((i) => i.content != null && i.contentId != null).map((i) => ({
+      contentId:  i.contentId!,
       durationMs: i.durationMs,
-      name:       i.content.name,
-      type:       i.content.type,
-      url:        i.content.url,
+      name:       i.content!.name,
+      type:       i.content!.type,
+      url:        i.content!.url,
     })));
     setTransition(pl.transition);
     setSaved(false);
@@ -112,6 +117,10 @@ export default function PlaylistsTab() {
 
   const save = async () => {
     if (!selected) return;
+    if (hasNested) {
+      toast({ variant: 'destructive', title: 'Read-only playlist', description: 'This playlist contains nested playlists, which this editor cannot display — saving would drop them. Edit it via the API.' });
+      return;
+    }
     setSaving(true);
     try {
       const updated = await updatePlaylist(selected, {
@@ -244,13 +253,14 @@ export default function PlaylistsTab() {
                 </div>
                 <button
                   onClick={save}
-                  disabled={saving}
+                  disabled={saving || hasNested}
+                  title={hasNested ? 'Contains nested playlists — read-only in this editor' : undefined}
                   className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition-colors disabled:opacity-40 ${
                     saved ? 'bg-green-500/10 text-green-700 border border-green-500/30' : 'bg-primary text-white hover:bg-primary/90'
                   }`}
                 >
                   {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5" /> : null}
-                  {saving ? 'Saving…' : saved ? 'Saved' : 'Save playlist'}
+                  {saving ? 'Saving…' : saved ? 'Saved' : hasNested ? 'Read-only (nested)' : 'Save playlist'}
                 </button>
               </div>
             </div>

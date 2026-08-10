@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { publicUrl } from '@/lib/r2';
 import { pushPlanUpdated, resolveScheduleDeviceIds } from '@/lib/fcm';
+import { validateNesting, type PlaylistItemInput } from '@/lib/playlist-nesting';
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
@@ -19,7 +20,7 @@ function normalizePlaylist(pl: any) {
     createdAt: (pl.createdAt as Date).toISOString(),
     items: (pl.items ?? []).map((item: any) => ({
       ...item,
-      content: {
+      content: item.content ? {
         id:         item.content.id,
         name:       item.content.name,
         type:       (item.content.type as string).toLowerCase() as 'image' | 'video',
@@ -29,7 +30,8 @@ function normalizePlaylist(pl: any) {
         sizeBytes:  Number(item.content.sizeBytes),
         durationMs: item.content.durationMs ?? undefined,
         createdAt:  (item.content.uploadedAt as Date).toISOString(),
-      },
+      } : null,
+      childPlaylist: item.childPlaylist ?? null,
     })),
   };
 }
@@ -43,9 +45,14 @@ export async function PATCH(
   try {
     const { name, items, transition } = await req.json() as {
       name?:       string;
-      items?:      { contentId: string; durationMs: number }[];
+      items?:      PlaylistItemInput[];
       transition?: 'NONE' | 'FADE' | 'SLIDE';
     };
+
+    if (items !== undefined) {
+      const nestingError = await validateNesting(id, items);
+      if (nestingError) return NextResponse.json({ error: nestingError }, { status: 400 });
+    }
 
     await db.$transaction(async (tx) => {
       if (name?.trim() || transition) {
@@ -62,10 +69,11 @@ export async function PATCH(
         if (items.length) {
           await tx.playlistItem.createMany({
             data: items.map((item, idx) => ({
-              playlistId: id,
-              contentId:  item.contentId,
-              durationMs: item.durationMs,
-              order:      idx,
+              playlistId:      id,
+              contentId:       item.contentId ?? null,
+              childPlaylistId: item.childPlaylistId ?? null,
+              durationMs:      item.durationMs,
+              order:           idx,
             })),
           });
         }
@@ -78,7 +86,15 @@ export async function PATCH(
     };
     const updated = await db.playlist.findUnique({
       where:   { id },
-      include: { items: { include: { content: { select: CONTENT_SELECT } }, orderBy: { order: 'asc' } } },
+      include: {
+        items: {
+          include: {
+            content:       { select: CONTENT_SELECT },
+            childPlaylist: { select: { id: true, name: true } },
+          },
+          orderBy: { order: 'asc' },
+        },
+      },
     });
     // Push plan_updated to all devices scheduled via this playlist (best-effort, non-blocking)
     if (items !== undefined || transition !== undefined) {

@@ -424,8 +424,10 @@ model Playlist {
   createdAt  DateTime           @default(now())
   updatedAt  DateTime           @updatedAt
 
-  items     PlaylistItem[]
-  schedules Schedule[]
+  items        PlaylistItem[]
+  schedules    Schedule[]
+  // Items in OTHER playlists that nest this playlist (SMIL-style Master → Internal).
+  referencedBy PlaylistItem[]   @relation("PlaylistNesting")
 }
 
 enum PlaylistTransition {
@@ -435,17 +437,23 @@ enum PlaylistTransition {
 }
 
 model PlaylistItem {
-  id         String @id @default(cuid())
+  id         String  @id @default(cuid())
   playlistId String
-  contentId  String
-  durationMs Int // override duration per item
+  // Exactly one of contentId / childPlaylistId is set (enforced in the playlists API):
+  // a media item plays content; a nested item plays another playlist in full (SMIL
+  // <seq>-in-<seq> semantics). Max nesting depth 3, cycles rejected at write time.
+  contentId       String?
+  childPlaylistId String?
+  durationMs Int // media items: display duration; nested items: ignored (children rule)
   order      Int
 
-  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
-  content  Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  playlist      Playlist  @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  content       Content?  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  childPlaylist Playlist? @relation("PlaylistNesting", fields: [childPlaylistId], references: [id], onDelete: Cascade)
 
   @@unique([playlistId, order])
   @@index([contentId])
+  @@index([childPlaylistId])
 }
 
 enum Recurrence {

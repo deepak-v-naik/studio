@@ -106,10 +106,14 @@ export type Content = {
 
 export type PlaylistItem = {
   id:         string;
-  contentId:  string;
+  // Exactly one of contentId / childPlaylistId is set: media item vs nested playlist
+  // (SMIL Master → Internal, plays fully per visit; max depth 3, cycles rejected).
+  contentId:       string | null;
+  childPlaylistId?: string | null;
   durationMs: number;
   order:      number;
-  content:    Content;
+  content:        Content | null;
+  childPlaylist?: { id: string; name: string } | null;
 };
 
 export type Playlist = {

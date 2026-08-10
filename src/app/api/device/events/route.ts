@@ -36,6 +36,43 @@ type TelemetryInput = {
   lastStallMs?:     number;  // epoch ms of last detected decoder stall
 };
 
+// Player-side incident records (crash stacks, decoder stalls, watchdog fallbacks),
+// batched up from the device's local Room table with each heartbeat. Stored as
+// TelemetryEvent rows (route 'player/incident') so they surface in the existing admin
+// telemetry viewer with no extra UI.
+type IncidentInput = {
+  type?:     string;  // UNCAUGHT_EXCEPTION | STUCK_PLAYBACK | FALLBACK_TRIGGERED
+  atMs?:     number;
+  metadata?: string;
+};
+
+const clampStr = (v: unknown, max: number): string | undefined =>
+  typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined;
+
+async function storeIncidents(deviceId: string, correlationId: string, incidents: unknown): Promise<number> {
+  if (!Array.isArray(incidents) || incidents.length === 0) return 0;
+  let stored = 0;
+  for (const raw of (incidents as IncidentInput[]).slice(0, 50)) {
+    const type = clampStr(raw?.type, 60);
+    if (!type) continue;
+    const atMs = typeof raw?.atMs === 'number' && raw.atMs > 0 ? raw.atMs : null;
+    try {
+      await recordError({
+        route:       'player/incident',
+        errorClass:  type,
+        message:     clampStr(raw?.metadata, 4000) ?? type,
+        stackHash:   type === 'UNCAUGHT_EXCEPTION' ? hashStack(clampStr(raw?.metadata, 4000)) : undefined,
+        actorType:   'device',
+        deviceId,
+        correlationId,
+        requestMeta: atMs ? { occurredAt: new Date(atMs).toISOString() } : undefined,
+      });
+      stored++;
+    } catch { /* one bad incident must not fail the heartbeat */ }
+  }
+  return stored;
+}
+
 /** Maps a telemetry payload onto Device columns. Shared by the telemetry-only and
  *  events+telemetry paths so the two can't drift. */
 function telemetryToDeviceData(t: TelemetryInput) {
@@ -90,8 +127,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = await req.json() as { events: PlayEventInput[]; telemetry?: TelemetryInput };
+    const body = await req.json() as { events: PlayEventInput[]; telemetry?: TelemetryInput; incidents?: IncidentInput[] };
     const { events, telemetry } = body;
+    // Incidents ride along on any heartbeat/event batch; store before branching so the
+    // telemetry-only path gets them too. Best-effort — never fails the request.
+    await storeIncidents(device.id, correlationId, body.incidents).catch(() => 0);
     if (!Array.isArray(events) || events.length === 0) {
       // Allow empty event batches if telemetry-only heartbeat
       if (telemetry) {

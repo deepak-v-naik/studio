@@ -1,11 +1,15 @@
 // Playlist CRUD.
 // GET  /api/playlists   → { playlists: Playlist[] }
-// POST /api/playlists   → { playlist: Playlist }   body: { name, items?: { contentId, durationMs }[] }
+// POST /api/playlists   → { playlist: Playlist }
+//   body: { name, items?: { contentId? | childPlaylistId?, durationMs }[] }
+//   (childPlaylistId nests another playlist — SMIL Master → Internal; validated in
+//    lib/playlist-nesting.ts: XOR target, no cycles, max depth 3)
 // Auth: admin-password header
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { publicUrl } from '@/lib/r2';
+import { validateNesting, type PlaylistItemInput } from '@/lib/playlist-nesting';
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
@@ -19,7 +23,7 @@ function normalizePlaylist(pl: any) {
     createdAt: (pl.createdAt as Date).toISOString(),
     items: (pl.items ?? []).map((item: any) => ({
       ...item,
-      content: {
+      content: item.content ? {
         id:         item.content.id,
         name:       item.content.name,
         type:       (item.content.type as string).toLowerCase() as 'image' | 'video',
@@ -29,7 +33,8 @@ function normalizePlaylist(pl: any) {
         sizeBytes:  Number(item.content.sizeBytes),
         durationMs: item.content.durationMs ?? undefined,
         createdAt:  (item.content.uploadedAt as Date).toISOString(),
-      },
+      } : null,
+      childPlaylist: item.childPlaylist ?? null,
     })),
   };
 }
@@ -39,11 +44,21 @@ const CONTENT_SELECT = {
   md5: true, sizeBytes: true, durationMs: true, uploadedAt: true,
 };
 
+const ITEMS_INCLUDE = {
+  items: {
+    include: {
+      content:       { select: CONTENT_SELECT },
+      childPlaylist: { select: { id: true, name: true } },
+    },
+    orderBy: { order: 'asc' as const },
+  },
+};
+
 export async function GET(req: NextRequest) {
   if (!adminGuard(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     const rows = await db.playlist.findMany({
-      include: { items: { include: { content: { select: CONTENT_SELECT } }, orderBy: { order: 'asc' } } },
+      include: ITEMS_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
     return NextResponse.json({ playlists: rows.map(normalizePlaylist) });
@@ -57,10 +72,15 @@ export async function POST(req: NextRequest) {
   try {
     const { name, items = [], transition } = await req.json() as {
       name: string;
-      items?: { contentId: string; durationMs: number }[];
+      items?: PlaylistItemInput[];
       transition?: 'NONE' | 'FADE' | 'SLIDE';
     };
     if (!name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 });
+
+    // '__new__' placeholder: a not-yet-created playlist can't self-reference or close a
+    // cycle, but its nested chain must still respect the depth cap.
+    const nestingError = await validateNesting('__new__', items);
+    if (nestingError) return NextResponse.json({ error: nestingError }, { status: 400 });
 
     const playlist = await db.playlist.create({
       data: {
@@ -68,13 +88,14 @@ export async function POST(req: NextRequest) {
         transition: transition ?? 'NONE',
         items: {
           create: items.map((item, idx) => ({
-            contentId:  item.contentId,
-            durationMs: item.durationMs,
-            order:      idx,
+            contentId:       item.contentId ?? null,
+            childPlaylistId: item.childPlaylistId ?? null,
+            durationMs:      item.durationMs,
+            order:           idx,
           })),
         },
       },
-      include: { items: { include: { content: { select: CONTENT_SELECT } }, orderBy: { order: 'asc' } } },
+      include: ITEMS_INCLUDE,
     });
 
     return NextResponse.json({ playlist: normalizePlaylist(playlist) });
