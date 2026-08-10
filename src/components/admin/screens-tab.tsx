@@ -6,11 +6,11 @@ import {
   ChevronDown, ChevronUp, Copy, Check, Play, CalendarDays, Pencil, Stethoscope, X,
   ExternalLink, CheckCircle2, TriangleAlert, Film, ImageIcon, Layers, Trash2,
   Store, Link2, Filter, SlidersHorizontal, LayoutList, LayoutGrid, ChevronLeft, ChevronRight,
-  MapPin, RefreshCw, Monitor,
+  MapPin, RefreshCw, Monitor, Power, HeartPulse,
 } from 'lucide-react';
 import {
   getDevices, updateDevice, bulkUpdateDevices, bulkPushSchedule, getDeviceGroups, getPlaylists,
-  searchStores, forceSyncDevice, confirmPairing,
+  searchStores, forceSyncDevice, sendDeviceCommand, confirmPairing,
   type Device, type DeviceGroup, type StoreSearchResult, type Playlist,
 } from '@/lib/backend-api';
 import ScreenTestButton from './screen-test-button';
@@ -795,6 +795,25 @@ export default function ScreensTab() {
     }
   };
 
+  const doHealthPing = async (id: string) => {
+    try {
+      await sendDeviceCommand(id, 'health_ping');
+      toast({ title: 'Health ping sent ✓', description: 'Player will report telemetry immediately instead of waiting for its next heartbeat.' });
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Health ping failed', description: (e as Error).message });
+    }
+  };
+
+  const doReboot = async (id: string, label: string) => {
+    if (!window.confirm(`Reboot "${label}"? The screen will go dark for ~1-2 minutes while it restarts.`)) return;
+    try {
+      await sendDeviceCommand(id, 'reboot');
+      toast({ title: 'Reboot command sent ✓', description: 'The screen will restart shortly (device-owner installs only).' });
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Reboot failed', description: (e as Error).message });
+    }
+  };
+
   const doBulkForceSync = async () => {
     setBulking(true);
     try {
@@ -1138,6 +1157,12 @@ export default function ScreensTab() {
                         </button>
                         <button onClick={() => doForceSync(d.id)} title="Force this screen to re-fetch its plan on next poll" className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
                           <RefreshCw className="h-3 w-3" /> Sync
+                        </button>
+                        <button onClick={() => doHealthPing(d.id)} title="Ask the screen to report telemetry right now, instead of waiting for its next heartbeat" className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
+                          <HeartPulse className="h-3 w-3" /> Ping
+                        </button>
+                        <button onClick={() => doReboot(d.id, d.storeName ?? friendlyDeviceLabel(d))} title="Remotely reboot this screen (device-owner installs only)" className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:border-destructive/40 hover:text-destructive transition-colors">
+                          <Power className="h-3 w-3" /> Reboot
                         </button>
                         <Badge variant={STATUS_BADGE[d.status]} dot className="text-[10px] py-0.5 px-2 font-bold">
                           <StatusIcon className="h-2.5 w-2.5" />{d.status}

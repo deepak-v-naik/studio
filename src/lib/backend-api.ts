@@ -338,6 +338,11 @@ export const deleteSchedule = (id: string) =>
 export const forceSyncDevice = (id: string) =>
   apiFetch<{ ok: boolean; forceSyncAt: string | null }>(`/api/devices/${id}/force-sync`, { method: 'POST' });
 
+// ─── Remote commands (reboot / health ping) ────────────────────────────────────
+
+export const sendDeviceCommand = (id: string, type: 'reboot' | 'health_ping') =>
+  apiFetch<{ ok: boolean }>(`/api/devices/${id}/command`, { method: 'POST', body: JSON.stringify({ type }) });
+
 // ─── Overlays (on-screen layouts) ─────────────────────────────────────────────
 
 export type OverlayType     = 'TICKER' | 'NEWS_TICKER' | 'BANNER' | 'INFO_BAR';

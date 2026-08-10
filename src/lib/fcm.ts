@@ -25,12 +25,17 @@ async function getFirebaseApp(): Promise<App | null> {
   }
 }
 
+// Command types the player understands (AliveMessagingService.onMessageReceived).
+// This is ALIVE's equivalent of Xibo's XMR relay — FCM already gives us a persistent,
+// NAT-friendly push channel to the fleet, so there's no separate ZeroMQ/Redis relay to run.
+export type DeviceCommandType = 'plan_updated' | 'reboot' | 'health_ping';
+
 /**
- * Sends a `plan_updated` FCM data message to the given device IDs.
+ * Sends a data-only FCM message of the given type to the given device IDs.
  * Silently no-ops if FIREBASE_SERVICE_ACCOUNT_JSON is not set.
- * Never throws — push is best-effort.
+ * Never throws — push is best-effort (players still fall back to their normal poll).
  */
-export async function pushPlanUpdated(deviceIds: string[]): Promise<void> {
+export async function pushCommand(deviceIds: string[], type: DeviceCommandType): Promise<void> {
   if (!deviceIds.length) return;
   const app = await getFirebaseApp();
   if (!app) return;
@@ -51,7 +56,7 @@ export async function pushPlanUpdated(deviceIds: string[]): Promise<void> {
     for (let i = 0; i < tokens.length; i += CHUNK) {
       await messaging.sendEachForMulticast({
         tokens: tokens.slice(i, i + CHUNK),
-        data: { type: 'plan_updated' },
+        data: { type },
         android: { priority: 'high' },
       });
     }
@@ -59,6 +64,9 @@ export async function pushPlanUpdated(deviceIds: string[]): Promise<void> {
     // best-effort — never break the API response
   }
 }
+
+/** Sends a `plan_updated` FCM data message to the given device IDs. */
+export const pushPlanUpdated = (deviceIds: string[]) => pushCommand(deviceIds, 'plan_updated');
 
 /**
  * Resolves device IDs affected by a schedule's targeting fields.
