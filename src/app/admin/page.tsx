@@ -19,6 +19,7 @@ import './admin.css';
 
 const ScreensTab      = dynamic(() => import('@/components/admin/screens-tab'),       { ssr: false });
 const ReportsTab      = dynamic(() => import('@/components/admin/reports-tab'),       { ssr: false });
+const ProofOfPlayTab  = dynamic(() => import('@/components/admin/proof-of-play-tab'), { ssr: false });
 const ContentTab      = dynamic(() => import('@/components/admin/content-tab'),       { ssr: false });
 const ProgrammingTab  = dynamic(() => import('@/components/admin/programming-tab'),  { ssr: false });
 const CompositionsTab = dynamic(() => import('@/components/admin/compositions-tab'), { ssr: false });
@@ -62,7 +63,7 @@ type Campaign = {
 
 // ─── Nav config ──────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'flyers' | 'stores' | 'campaigns' | 'payments' | 'coupons' | 'screens' | 'content' | 'programming' | 'compositions' | 'layouts' | 'reports' | 'monitoring' | 'footfall' | 'alerts' | 'media' | 'roadmap' | 'products';
+type Tab = 'overview' | 'flyers' | 'stores' | 'campaigns' | 'payments' | 'coupons' | 'screens' | 'content' | 'programming' | 'compositions' | 'layouts' | 'reports' | 'pop' | 'monitoring' | 'footfall' | 'alerts' | 'media' | 'roadmap' | 'products';
 type DeviceRow = { id: string; storeName: string; status: string; lastSeen?: string | null; locality?: string | null };
 
 const NAV: { group: string; items: { id: Tab; label: string; icon: React.ElementType; badge?: string }[] }[] = [
@@ -123,6 +124,7 @@ const PAGE_META: Record<Tab, { eyebrow: string; title: string }> = {
   compositions: { eyebrow: 'Content delivery',   title: 'Compositions'       },
   layouts:    { eyebrow: 'On-screen overlays', title: 'Layouts & tickers'  },
   reports:    { eyebrow: 'Proof of play',      title: 'Play reports'       },
+  pop:        { eyebrow: 'Proof of play',      title: 'Proof of Play'      },
   monitoring: { eyebrow: 'Live network',       title: 'Monitoring'         },
   footfall:   { eyebrow: 'In-store presence',  title: 'Footfall'           },
   media:      { eyebrow: 'Site management',    title: 'Homepage media'     },
@@ -1096,6 +1098,7 @@ const NAV_DESIGN: { group: string | null; items: { id: Tab; label: string; icon:
       { id: 'payments' as Tab,   label: 'Payouts',          icon: IndianRupee,     count: null },
       { id: 'coupons' as Tab,    label: 'Coupons',          icon: Ticket,          count: null },
       { id: 'reports' as Tab,    label: 'Reports',          icon: FileBarChart2,   count: null },
+      { id: 'pop' as Tab,        label: 'Proof of Play',    icon: MonitorPlay,     count: null },
     ],
   },
   {
@@ -1425,6 +1428,7 @@ function Dashboard() {
     payments:   'Payouts',
     coupons:    'Coupons',
     reports:    'Reports',
+    pop:        'Proof of Play',
     flyers:     'Flyers',
     layouts:    'Layouts',
     media:      'Media',
@@ -1478,6 +1482,7 @@ function Dashboard() {
               {tab === 'compositions' && <CompositionsTab />}
               {tab === 'layouts'    && <LayoutsTab />}
               {tab === 'reports'    && <ReportsTab />}
+              {tab === 'pop'        && <ProofOfPlayTab />}
               {tab === 'monitoring' && <MonitoringTab />}
               {tab === 'footfall'   && <FootfallTab />}
               {tab === 'alerts'    && <AlertsTab onNav={(t) => handleNav(t as Tab)} />}
