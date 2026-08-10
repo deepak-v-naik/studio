@@ -105,10 +105,11 @@ function SummaryCard({ icon, label, value, sub }: { icon: React.ReactNode; label
 
 // ─── Campaign Card ─────────────────────────────────────────────────────────────
 
-function CampaignCard({ c, sheetsConnected }: { c: Campaign; sheetsConnected?: boolean }) {
+function CampaignCard({ c, sheetsConnected, analytics }: { c: Campaign; sheetsConnected?: boolean; analytics?: Analytics | null }) {
   const status         = deriveCampaignStatus(c);
   const startFormatted = c.startDate ? format(parseISO(c.startDate), 'd MMM yyyy') : '—';
   const endFormatted   = c.startDate ? format(addMonths(parseISO(c.startDate), c.months), 'd MMM yyyy') : '—';
+  const pop             = analytics?.byCampaign.find((b) => b.campaignId === c.id);
 
   const [exporting, setExporting] = useState(false);
   const [sheetUrl,  setSheetUrl]  = useState<string | null>(null);
@@ -140,9 +141,9 @@ function CampaignCard({ c, sheetsConnected }: { c: Campaign; sheetsConnected?: b
 
       <div className="grid grid-cols-3 sm:grid-cols-3 gap-3 text-center">
         {[
-          { icon: <Monitor    className="h-3.5 w-3.5" />, label: 'Screens',   value: c.screens.toString() },
-          { icon: <TrendingUp className="h-3.5 w-3.5" />, label: 'Plays/day', value: `~${(144 * c.screens).toLocaleString('en-IN')}` },
-          { icon: <Eye        className="h-3.5 w-3.5" />, label: 'Views/mo',  value: `~${(4320 * c.screens).toLocaleString('en-IN')}` },
+          { icon: <Monitor    className="h-3.5 w-3.5" />, label: 'Screens',    value: c.screens.toString() },
+          { icon: <TrendingUp className="h-3.5 w-3.5" />, label: 'Total plays', value: pop ? pop.plays.toLocaleString('en-IN') : '—' },
+          { icon: <Eye        className="h-3.5 w-3.5" />, label: 'Watch time', value: pop ? `${Math.round(pop.watchMs / 60000).toLocaleString('en-IN')}m` : '—' },
         ].map(({ icon, label, value }) => (
           <div key={label} className="rounded-lg bg-muted/30 p-2.5 space-y-1">
             <div className="flex justify-center text-muted-foreground">{icon}</div>
@@ -1664,7 +1665,7 @@ export default function DashboardPage() {
                   </button>
                 </div>
                 <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-4 sm:grid-cols-2">
-                  {campaigns.map((c) => <CampaignCard key={c.id} c={c} sheetsConnected={!!sheetsConnected} />)}
+                  {campaigns.map((c) => <CampaignCard key={c.id} c={c} sheetsConnected={!!sheetsConnected} analytics={analytics} />)}
                 </motion.div>
               </>
             )}
