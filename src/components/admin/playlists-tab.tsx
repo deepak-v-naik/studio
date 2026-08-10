@@ -17,7 +17,14 @@ function fmtMs(ms: number) {
 
 const inp = 'w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all';
 
-type DraftItem = { contentId: string; durationMs: number; name: string; type: 'image' | 'video'; url: string };
+// An editor row is either a media item or a nested playlist (SMIL Master → Internal:
+// plays ALL its items per visit, then the parent continues; max depth 3, cycles
+// rejected server-side).
+type DraftItem =
+  | { kind: 'content'; contentId: string; durationMs: number; name: string; type: 'image' | 'video'; url: string }
+  | { kind: 'playlist'; childPlaylistId: string; durationMs: number; name: string };
+
+const keyOf = (i: DraftItem) => i.kind === 'content' ? `c:${i.contentId}` : `p:${i.childPlaylistId}`;
 
 export default function PlaylistsTab() {
   const [playlists,  setPlaylists]  = useState<Playlist[]>([]);
@@ -32,7 +39,6 @@ export default function PlaylistsTab() {
   const [draft,      setDraft]      = useState<DraftItem[]>([]);
   const [transition, setTransition] = useState<Playlist['transition']>('NONE');
   const [saved,      setSaved]      = useState(false);
-  const [hasNested,  setHasNested]  = useState(false);
 
   // Drag-to-reorder refs
   const dragIdx     = useRef<number | null>(null);
@@ -50,17 +56,27 @@ export default function PlaylistsTab() {
 
   const selectPlaylist = (pl: Playlist) => {
     setSelected(pl.id);
-    // Playlists containing nested-playlist items (childPlaylistId set, content null) are
-    // read-only here: this editor saves via full replace, so editing one would silently
-    // drop the nested items it can't display. They stay editable via the API.
-    setHasNested(pl.items.some((i) => i.childPlaylistId != null));
-    setDraft(pl.items.filter((i) => i.content != null && i.contentId != null).map((i) => ({
-      contentId:  i.contentId!,
-      durationMs: i.durationMs,
-      name:       i.content!.name,
-      type:       i.content!.type,
-      url:        i.content!.url,
-    })));
+    setDraft(pl.items.flatMap((i): DraftItem[] => {
+      if (i.childPlaylistId != null) {
+        return [{
+          kind: 'playlist',
+          childPlaylistId: i.childPlaylistId,
+          durationMs: i.durationMs,
+          name: i.childPlaylist?.name ?? 'Deleted playlist',
+        }];
+      }
+      if (i.content != null && i.contentId != null) {
+        return [{
+          kind: 'content',
+          contentId:  i.contentId,
+          durationMs: i.durationMs,
+          name:       i.content.name,
+          type:       i.content.type,
+          url:        i.content.url,
+        }];
+      }
+      return []; // orphaned row (target deleted) — dropped on next save
+    }));
     setTransition(pl.transition);
     setSaved(false);
   };
@@ -83,8 +99,9 @@ export default function PlaylistsTab() {
   };
 
   const addContent = (c: Content) => {
-    if (draft.some((d) => d.contentId === c.id)) return;
+    if (draft.some((d) => d.kind === 'content' && d.contentId === c.id)) return;
     setDraft((d) => [...d, {
+      kind:       'content',
       contentId:  c.id,
       durationMs: c.durationMs ?? (c.type === 'video' ? 30000 : 10000),
       name:       c.name,
@@ -94,13 +111,27 @@ export default function PlaylistsTab() {
     setSaved(false);
   };
 
-  const removeItem = (contentId: string) => {
-    setDraft((d) => d.filter((i) => i.contentId !== contentId));
+  const addPlaylist = (pl: Playlist) => {
+    // Self-nesting and duplicates are blocked here; cycles/depth are validated
+    // server-side on save (400 with a clear message).
+    if (pl.id === selected) return;
+    if (draft.some((d) => d.kind === 'playlist' && d.childPlaylistId === pl.id)) return;
+    setDraft((d) => [...d, {
+      kind: 'playlist',
+      childPlaylistId: pl.id,
+      durationMs: 0, // ignored for nested items — children's durations rule
+      name: pl.name,
+    }]);
     setSaved(false);
   };
 
-  const updateDuration = (contentId: string, ms: number) => {
-    setDraft((d) => d.map((i) => i.contentId === contentId ? { ...i, durationMs: ms } : i));
+  const removeItem = (key: string) => {
+    setDraft((d) => d.filter((i) => keyOf(i) !== key));
+    setSaved(false);
+  };
+
+  const updateDuration = (key: string, ms: number) => {
+    setDraft((d) => d.map((i) => keyOf(i) === key ? { ...i, durationMs: ms } : i));
     setSaved(false);
   };
 
@@ -117,14 +148,12 @@ export default function PlaylistsTab() {
 
   const save = async () => {
     if (!selected) return;
-    if (hasNested) {
-      toast({ variant: 'destructive', title: 'Read-only playlist', description: 'This playlist contains nested playlists, which this editor cannot display — saving would drop them. Edit it via the API.' });
-      return;
-    }
     setSaving(true);
     try {
       const updated = await updatePlaylist(selected, {
-        items: draft.map((i) => ({ contentId: i.contentId, durationMs: i.durationMs })),
+        items: draft.map((i) => i.kind === 'content'
+          ? { contentId: i.contentId, durationMs: i.durationMs }
+          : { childPlaylistId: i.childPlaylistId, durationMs: i.durationMs }),
         transition,
       });
       setPlaylists((p) => p.map((pl) => pl.id === selected ? updated : pl));
@@ -236,7 +265,10 @@ export default function PlaylistsTab() {
             <div className="flex items-center justify-between px-5 py-3 border-b border-border">
               <div>
                 <p className="text-sm font-bold text-foreground">{activePl?.name}</p>
-                <p className="text-[10px] text-muted-foreground">{draft.length} items · {fmtMs(draft.reduce((s, i) => s + i.durationMs, 0))} total · drag to reorder</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {draft.length} items · {fmtMs(draft.reduce((s, i) => s + i.durationMs, 0))}
+                  {draft.some((i) => i.kind === 'playlist') ? ' + nested playlists' : ''} total · drag to reorder
+                </p>
               </div>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
@@ -253,14 +285,13 @@ export default function PlaylistsTab() {
                 </div>
                 <button
                   onClick={save}
-                  disabled={saving || hasNested}
-                  title={hasNested ? 'Contains nested playlists — read-only in this editor' : undefined}
+                  disabled={saving}
                   className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition-colors disabled:opacity-40 ${
                     saved ? 'bg-green-500/10 text-green-700 border border-green-500/30' : 'bg-primary text-white hover:bg-primary/90'
                   }`}
                 >
                   {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5" /> : null}
-                  {saving ? 'Saving…' : saved ? 'Saved' : hasNested ? 'Read-only (nested)' : 'Save playlist'}
+                  {saving ? 'Saving…' : saved ? 'Saved' : 'Save playlist'}
                 </button>
               </div>
             </div>
@@ -271,7 +302,7 @@ export default function PlaylistsTab() {
               <div className="divide-y divide-border">
                 {draft.map((item, idx) => (
                   <div
-                    key={item.contentId}
+                    key={keyOf(item)}
                     draggable
                     onDragStart={(e) => {
                       dragIdx.current = idx;
@@ -290,7 +321,11 @@ export default function PlaylistsTab() {
                   >
                     <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0 cursor-grab active:cursor-grabbing" />
                     <span className="text-[10px] text-muted-foreground/50 w-4">{idx + 1}</span>
-                    {item.type === 'image' ? (
+                    {item.kind === 'playlist' ? (
+                      <div className="flex h-9 w-14 items-center justify-center rounded-lg bg-primary/10 shrink-0">
+                        <ListVideo className="h-4 w-4 text-primary" />
+                      </div>
+                    ) : item.type === 'image' ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={item.url} alt="" className="h-9 w-14 object-cover rounded-lg bg-muted shrink-0" />
                     ) : (
@@ -302,18 +337,25 @@ export default function PlaylistsTab() {
                         className="h-9 w-14 object-cover rounded-lg bg-purple-500/10 shrink-0"
                       />
                     )}
-                    <p className="flex-1 text-xs font-semibold text-foreground truncate">{item.name}</p>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <input
-                        type="number"
-                        min={1}
-                        value={Math.round(item.durationMs / 1000)}
-                        onChange={(e) => updateDuration(item.contentId, Number(e.target.value) * 1000)}
-                        className="w-14 rounded-lg border border-border bg-background px-2 py-1 text-xs text-center text-foreground focus:outline-none focus:border-primary"
-                      />
-                      <span className="text-[10px] text-muted-foreground">sec</span>
-                    </div>
-                    <button onClick={() => removeItem(item.contentId)} className="rounded-lg p-1 text-muted-foreground/50 hover:text-destructive transition-colors">
+                    <p className="flex-1 text-xs font-semibold text-foreground truncate">
+                      {item.name}
+                      {item.kind === 'playlist' && <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-primary/70">playlist</span>}
+                    </p>
+                    {item.kind === 'content' ? (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <input
+                          type="number"
+                          min={1}
+                          value={Math.round(item.durationMs / 1000)}
+                          onChange={(e) => updateDuration(keyOf(item), Number(e.target.value) * 1000)}
+                          className="w-14 rounded-lg border border-border bg-background px-2 py-1 text-xs text-center text-foreground focus:outline-none focus:border-primary"
+                        />
+                        <span className="text-[10px] text-muted-foreground">sec</span>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground shrink-0">plays all its items</span>
+                    )}
+                    <button onClick={() => removeItem(keyOf(item))} className="rounded-lg p-1 text-muted-foreground/50 hover:text-destructive transition-colors">
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
@@ -330,7 +372,7 @@ export default function PlaylistsTab() {
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2">
                 {content.map((c) => {
-                  const added = draft.some((d) => d.contentId === c.id);
+                  const added = draft.some((d) => d.kind === 'content' && d.contentId === c.id);
                   return (
                     <button
                       key={c.id}
@@ -378,6 +420,35 @@ export default function PlaylistsTab() {
               </div>
             )}
           </div>
+
+          {/* Nested playlist picker */}
+          {playlists.filter((pl) => pl.id !== selected).length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Nest a playlist</p>
+              <p className="text-[10px] text-muted-foreground mb-3">A nested playlist plays all of its items at that point in the loop, then this playlist continues. Max 3 levels; loops are rejected on save.</p>
+              <div className="flex flex-wrap gap-2">
+                {playlists.filter((pl) => pl.id !== selected).map((pl) => {
+                  const added = draft.some((d) => d.kind === 'playlist' && d.childPlaylistId === pl.id);
+                  return (
+                    <button
+                      key={pl.id}
+                      onClick={() => addPlaylist(pl)}
+                      disabled={added}
+                      className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                        added
+                          ? 'border-green-500/40 text-green-700 opacity-60 cursor-default'
+                          : 'border-border text-muted-foreground hover:border-primary/40 hover:text-primary'
+                      }`}
+                    >
+                      {added ? <Check className="h-3 w-3" /> : <ListVideo className="h-3 w-3" />}
+                      {pl.name}
+                      <span className="text-[9px] text-muted-foreground/60">{pl.items.length}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

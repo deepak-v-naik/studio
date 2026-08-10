@@ -310,11 +310,14 @@ export const transcodeVideo = (contentId: string) =>
 export const getPlaylists = () =>
   apiFetch<{ playlists: Playlist[] }>('/api/playlists').then((r) => r.playlists);
 
-export const createPlaylist = (body: { name: string; items?: { contentId: string; durationMs: number }[]; transition?: Playlist['transition'] }) =>
+// An item targets either content (media) or another playlist (nested — see PlaylistItem).
+export type PlaylistItemWrite = { contentId?: string; childPlaylistId?: string; durationMs: number };
+
+export const createPlaylist = (body: { name: string; items?: PlaylistItemWrite[]; transition?: Playlist['transition'] }) =>
   apiFetch<{ playlist: Playlist }>('/api/playlists', { method: 'POST', body: JSON.stringify(body) })
     .then((r) => r.playlist);
 
-export const updatePlaylist = (id: string, body: { name?: string; items?: { contentId: string; durationMs: number }[]; transition?: Playlist['transition'] }) =>
+export const updatePlaylist = (id: string, body: { name?: string; items?: PlaylistItemWrite[]; transition?: Playlist['transition'] }) =>
   apiFetch<{ playlist: Playlist }>(`/api/playlists/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
     .then((r) => r.playlist);
 
