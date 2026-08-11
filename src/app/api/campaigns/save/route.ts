@@ -27,6 +27,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(envelope, { status: 400 });
     }
 
+    // This route is unauthenticated — never let the client mint an 'active'
+    // (i.e. paid-looking) campaign. Paid status is set only by verify-payment
+    // after the Razorpay signature check.
+    if (body.status && !['upcoming', 'pending_payment'].includes(body.status)) {
+      const envelope = await respond({ error: 'Invalid campaign status.' }, { route, request: { status: body.status }, outcome: 'invalid_request', policyFlags: ['invalid_status'], errorCategory: 'validation', startedAtMs });
+      return NextResponse.json(envelope, { status: 400 });
+    }
+
     const email = body.email.trim().toLowerCase();
 
     // C1: a free (₹0) campaign — the "free trial" path — is allowed only once
