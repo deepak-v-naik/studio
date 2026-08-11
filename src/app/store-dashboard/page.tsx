@@ -871,9 +871,10 @@ const EARNING_TABLE = [
 
 function buildTimeline(store: StoreInfo) {
   const stage = store.onboardingStage ?? 'new';
-  const isContacted = ['contacted', 'visited', 'installed', 'live', 'rejected'].includes(stage);
-  const isVisited   = ['visited', 'installed', 'live'].includes(stage);
-  const isInstalled = ['installed', 'live'].includes(stage) || (store.deviceCount ?? 0) > 0;
+  // Admin panel uses physically_onboarded/digitally_onboarded; treat them as past verification + install
+  const isContacted = ['contacted', 'visited', 'installed', 'physically_onboarded', 'digitally_onboarded', 'live', 'rejected'].includes(stage);
+  const isVisited   = ['visited', 'installed', 'physically_onboarded', 'digitally_onboarded', 'live'].includes(stage);
+  const isInstalled = ['installed', 'physically_onboarded', 'digitally_onboarded', 'live'].includes(stage) || (store.deviceCount ?? 0) > 0;
   const isLive      = stage === 'live' || !!store.liveAt;
 
   return [

@@ -336,11 +336,12 @@ function FlyersList({ refresh }: { refresh: number }) {
 // ─── Stores Panel ─────────────────────────────────────────────────────────────
 
 const STAGE_LABELS: Record<string, string> = {
-  new: 'New', physically_onboarded: 'Physically onboarded',
+  new: 'New', contacted: 'Contacted', physically_onboarded: 'Physically onboarded',
   digitally_onboarded: 'Digitally onboarded', live: 'Live', rejected: 'Rejected',
 };
 const STAGE_COLORS: Record<string, string> = {
-  new: 'bg-gray-100 text-gray-600', physically_onboarded: 'bg-blue-50 text-blue-600',
+  new: 'bg-gray-100 text-gray-600', contacted: 'bg-amber-50 text-amber-600',
+  physically_onboarded: 'bg-blue-50 text-blue-600',
   digitally_onboarded: 'bg-indigo-50 text-indigo-600', live: 'bg-green-50 text-green-700',
   rejected: 'bg-red-50 text-red-500',
 };
@@ -354,6 +355,8 @@ function openAsPartner(s: StoreReg) {
     referralCode: s.referralCode, referredBy: s.referredBy || null,
     agreedAt: s.agreedAt || null, liveAt: s.liveAt || null,
     upiId: s.upiId || null, payoutMethod: s.payoutMethod || null,
+    onboardingStage: s.onboardingStage || null, deviceCount: s.deviceCount ?? 0,
+    tier: s.tier || 'standard', monthlyCompensationPaise: s.monthlyCompensationPaise ?? 50000,
     id: s.id,
   };
   localStorage.setItem('alive_store_session', JSON.stringify(session));
@@ -597,6 +600,7 @@ function StoresPanel() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                       <select value={s.onboardingStage ?? 'new'} onChange={(e) => patchLocal(s.id, { onboardingStage: e.target.value })} className={inp}>
                         <option value="new">New</option>
+                        <option value="contacted">Contacted / verified</option>
                         <option value="physically_onboarded">Physically onboarded</option>
                         <option value="digitally_onboarded">Digitally onboarded</option>
                         <option value="live">Live</option>
