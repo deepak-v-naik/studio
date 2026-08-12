@@ -145,11 +145,39 @@ function addDays(d: number) {
   return format(new Date(Date.now() + d * 86400000), 'yyyy-MM-dd');
 }
 
+// Coarse buy-side availability per date. Deliberately no store/slot mechanics — the
+// brand picks a date, not a screen or a loop position (see /api/brand/slot-availability).
+type DateStatus = 'available' | 'limited' | 'sold_out' | 'closed';
+
+const STATUS_LABEL: Record<DateStatus, string> = {
+  available: 'Available', limited: 'Limited', sold_out: 'Sold out', closed: 'Closed',
+};
+const STATUS_STYLE: Record<DateStatus, string> = {
+  available: 'text-green-700 bg-green-50 border-green-200',
+  limited:   'text-amber-700 bg-amber-50 border-amber-200',
+  sold_out:  'text-destructive bg-destructive/5 border-destructive/20',
+  closed:    'text-muted-foreground bg-muted border-border',
+};
+
 function DatePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
   const selected = value ? new Date(value + 'T00:00:00') : undefined;
+  const [statuses, setStatuses] = useState<Record<string, DateStatus>>({});
+
+  useEffect(() => {
+    const from = format(new Date(), 'yyyy-MM-dd');
+    const to   = format(new Date(Date.now() + 59 * 86400000), 'yyyy-MM-dd');
+    fetch(`/api/brand/slot-availability?from=${from}&to=${to}`)
+      .then((r) => r.ok ? r.json() as Promise<{ dates: { date: string; status: DateStatus }[] }> : null)
+      .then((d) => {
+        if (!d) return;
+        setStatuses(Object.fromEntries(d.dates.map((x) => [x.date, x.status])));
+      })
+      .catch(() => { /* availability is advisory — never block the booking flow */ });
+  }, []);
 
   const activeChip = DATE_CHIPS.find((c) => addDays(c.days) === value);
+  const selectedStatus = value ? statuses[value] : undefined;
 
   return (
     <div className="space-y-3">
@@ -192,15 +220,27 @@ function DatePicker({ value, onChange }: { value: string; onChange: (v: string) 
               onSelect={(date) => {
                 if (date) { onChange(format(date, 'yyyy-MM-dd')); setOpen(false); }
               }}
-              disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
+              disabled={(date) =>
+                date < new Date(new Date().setHours(0, 0, 0, 0)) ||
+                ['sold_out', 'closed'].includes(statuses[format(date, 'yyyy-MM-dd')] ?? '')
+              }
+              modifiers={{
+                limited: (date) => statuses[format(date, 'yyyy-MM-dd')] === 'limited',
+              }}
+              modifiersClassNames={{ limited: 'text-amber-700 font-bold' }}
               initialFocus
             />
           </PopoverContent>
         </Popover>
       </div>
       {selected && (
-        <p className="text-xs text-muted-foreground">
+        <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           Goes live <span className="font-semibold text-foreground">{format(selected, 'EEEE, d MMMM yyyy')}</span>
+          {selectedStatus && (
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${STATUS_STYLE[selectedStatus]}`}>
+              {STATUS_LABEL[selectedStatus]}
+            </span>
+          )}
         </p>
       )}
     </div>

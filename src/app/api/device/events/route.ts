@@ -23,6 +23,10 @@ type PlayEventInput = {
   startedAt:   string;   // ISO
   endedAt:     string;   // ISO
   durationMs:  number;
+  // Slot-loop attribution, echoed from the plan's slot items (slot-mode stores only):
+  // which loop position played and whether it was a bonus/filler play.
+  slotPosition?: number;
+  isFiller?:     boolean;
 };
 
 type TelemetryInput = {
@@ -184,6 +188,8 @@ export async function POST(req: NextRequest) {
             startedAt:  new Date(ev.startedAt),
             endedAt:    new Date(ev.endedAt),
             durationMs: ev.durationMs,
+            slotPosition: typeof ev.slotPosition === 'number' ? ev.slotPosition : null,
+            isFiller:     ev.isFiller === true,
             prevHash:   chainHash,
             rowHash,
           },

@@ -10,9 +10,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { publicUrl } from '@/lib/r2';
 import crypto from 'crypto';
 import { getOrCreateCorrelationId, hashStack, recordError } from '@/lib/telemetry';
-import { resolvePlaylistTree } from '@/lib/playlist-nesting';
+import { resolvePlaylistTree, type PlanMediaItem, type PlanNestedNode } from '@/lib/playlist-nesting';
+import { istToday, isOpenOn, buildSlotLoop, SLOT_DURATION_MS } from '@/lib/slots';
+import { resolveFillerCampaign } from '@/lib/slots-db';
 
 async function authenticate(req: NextRequest) {
   const auth  = req.headers.get('authorization') ?? '';
@@ -167,86 +170,179 @@ export async function GET(req: NextRequest) {
   const windowEnd = new Date(now.getTime() + 72 * 60 * 60 * 1000);
 
   try {
-    // Load device's store info for city/store targeting
+    // Load device's store info: city for schedule/overlay targeting, plus the store's
+    // slot-loop config (loopSlotCount set = slot mode, see the SlotBooking model).
     const deviceWithStore = device.storeId
-      ? await db.store.findUnique({ where: { id: device.storeId }, select: { id: true, city: true } })
+      ? await db.store.findUnique({
+          where:  { id: device.storeId },
+          select: {
+            id: true, city: true,
+            loopSlotCount: true, openDays: true, hoursStart: true, hoursEnd: true,
+            fillerCampaignId: true,
+          },
+        })
       : null;
+    const slotMode = deviceWithStore?.loopSlotCount != null;
 
-    // Find all schedules active in the next 72-hr window for this device, group, store, or city.
-    const scheduleOrConditions = [
-      { deviceIds: { has: device.id } },
-      ...(device.groupName       ? [{ groupName:  device.groupName }]              : []),
-      ...(device.storeId         ? [{ storeIds:   { has: device.storeId } }]       : []),
-      ...(deviceWithStore?.city  ? [{ cityFilter:  deviceWithStore.city }]          : []),
-    ];
-    const schedules = await db.schedule.findMany({
-      where: {
-        startAt: { lte: windowEnd },
-        endAt:   { gte: now },
-        OR: scheduleOrConditions,
-      },
-      select: {
-        id:         true,
-        name:       true,
-        playlistId: true,
-        priority:   true,
-        deviceIds:  true,
-        groupName:  true,
-        storeIds:   true,
-        cityFilter: true,
-        startAt:    true,
-        endAt:      true,
-        recurrence: true,
-        dailyStart: true,
-        dailyEnd:   true,
-        // Items come from resolvePlaylistTree below (handles nested playlists);
-        // only the playlist-level transition is needed here.
-        playlist: { select: { transition: true } },
-      },
-      orderBy: [{ priority: 'desc' }, { startAt: 'asc' }],
-    });
+    // Plan items: an item may carry slot attribution (slot mode only) which the
+    // player echoes back in proof-of-play events for guaranteed-vs-bonus reporting.
+    type WireItem = PlanMediaItem & { slotPosition?: number; isFiller?: boolean; campaignId?: string };
+    type TimelineSlot = {
+      scheduleId: string; priority: number; startAt: string; endAt: string;
+      playlistId: string | null; name: string | null;
+    };
+    let items:      WireItem[]       = [];
+    let nested:     PlanNestedNode[] = [];
+    let timeline:   TimelineSlot[]   = [];
+    let transition: 'NONE' | 'FADE' | 'SLIDE' = 'NONE';
+    let scheduleId: string | null    = null;
 
-    // Resolve priority conflicts across the 72-hr window, honouring dayparting
-    const windows: ScheduleWindow[] = schedules.flatMap((s) =>
-      expandDaypart(s, now, windowEnd).map((w) => ({
-        scheduleId: s.id,
-        priority:   s.priority,
-        startAt:    w.startAt,
-        endAt:      w.endAt,
-      })),
-    );
-    const resolvedSlots = resolveConflicts(windows);
+    if (slotMode) {
+      // ── Slot mode: fixed loop of N 10s ad slots, sold by position+date ─────────
+      // Today's loop only (bookings differ per day and the plan format shares one
+      // item list across windows); the 15-min poll + midnight hash change roll the
+      // loop over to the next day's bookings.
+      const store = deviceWithStore!;
+      const today = istToday(now);
+      if (isOpenOn(store.openDays, today)) {
+        const bookings = await db.slotBooking.findMany({
+          where:  { storeId: store.id, date: new Date(`${today}T00:00:00Z`) },
+          select: {
+            slotPosition: true, campaignId: true,
+            campaign: { select: { slotContentId: true } },
+          },
+        });
+        const filler = await resolveFillerCampaign(store.fillerCampaignId);
+        const loop = buildSlotLoop(
+          store.loopSlotCount!,
+          bookings.map((b) => ({
+            slotPosition: b.slotPosition, campaignId: b.campaignId,
+            slotContentId: b.campaign.slotContentId,
+          })),
+          filler,
+        );
 
-    // Build a map for quick lookup of schedule data
-    const scheduleMap = new Map(schedules.map((s) => [s.id, s]));
+        const contentIds = [...new Set(loop.map((a) => a.contentId))];
+        const contents = contentIds.length
+          ? await db.content.findMany({
+              where:  { id: { in: contentIds } },
+              select: { id: true, objectKey: true, md5: true, type: true, hevcObjectKey: true, hevcMd5: true },
+            })
+          : [];
+        const contentMap = new Map(contents.map((c) => [c.id, c]));
 
-    // For backward-compat: primary schedule is the one active right now (or first upcoming)
-    const nowMs = now.getTime();
-    const currentSlot = resolvedSlots.find(
-      (sl) => sl.startAt.getTime() <= nowMs && sl.endAt.getTime() > nowMs,
-    ) ?? resolvedSlots[0];
-    const schedule = currentSlot ? scheduleMap.get(currentSlot.scheduleId) : undefined;
+        items = loop.flatMap((a) => {
+          const c = contentMap.get(a.contentId);
+          if (!c) return [];
+          return [{
+            contentId:  c.id,
+            objectKey:  c.objectKey,
+            url:        publicUrl(c.objectKey),
+            md5:        c.md5,
+            type:       c.type,
+            durationMs: SLOT_DURATION_MS,
+            order:      a.slotPosition,
+            hevcUrl:    c.hevcObjectKey ? publicUrl(c.hevcObjectKey) : undefined,
+            hevcMd5:    c.hevcMd5 ?? undefined,
+            slotPosition: a.slotPosition,
+            isFiller:     a.isFiller,
+            campaignId:   a.campaignId,
+          }];
+        });
 
-    // Resolve the active playlist including any nested (Master → Internal) playlists.
-    // `items` stays the fully-flattened play order — identical semantics for legacy
-    // players and doubles as the download manifest; `nested` carries the tree for
-    // nesting-aware players (SMIL <seq>-in-<seq>: a nested playlist plays fully per visit).
-    const tree = schedule ? await resolvePlaylistTree(schedule.playlistId) : { nested: [], flat: [] };
-    const items  = tree.flat;
-    const nested = tree.nested;
+        const winStart = new Date(`${today}T${store.hoursStart}:00+05:30`);
+        const winEnd   = new Date(`${today}T${store.hoursEnd}:00+05:30`);
+        if (items.length > 0 && winEnd > now) {
+          scheduleId = `slotloop:${today}`;
+          timeline = [{
+            scheduleId, priority: 0,
+            startAt: winStart.toISOString(), endAt: winEnd.toISOString(),
+            playlistId: null, name: `Slot loop ${today}`,
+          }];
+        }
+      }
+      // Closed day or nothing playable: empty items/timeline — the player falls back
+      // to the fallback playlist / waiting screen, same as a schedule gap.
+    } else {
+      // ── Schedule mode (existing behaviour) ─────────────────────────────────────
+      // Find all schedules active in the next 72-hr window for this device, group, store, or city.
+      const scheduleOrConditions = [
+        { deviceIds: { has: device.id } },
+        ...(device.groupName       ? [{ groupName:  device.groupName }]              : []),
+        ...(device.storeId         ? [{ storeIds:   { has: device.storeId } }]       : []),
+        ...(deviceWithStore?.city  ? [{ cityFilter:  deviceWithStore.city }]          : []),
+      ];
+      const schedules = await db.schedule.findMany({
+        where: {
+          startAt: { lte: windowEnd },
+          endAt:   { gte: now },
+          OR: scheduleOrConditions,
+        },
+        select: {
+          id:         true,
+          name:       true,
+          playlistId: true,
+          priority:   true,
+          deviceIds:  true,
+          groupName:  true,
+          storeIds:   true,
+          cityFilter: true,
+          startAt:    true,
+          endAt:      true,
+          recurrence: true,
+          dailyStart: true,
+          dailyEnd:   true,
+          // Items come from resolvePlaylistTree below (handles nested playlists);
+          // only the playlist-level transition is needed here.
+          playlist: { select: { transition: true } },
+        },
+        orderBy: [{ priority: 'desc' }, { startAt: 'asc' }],
+      });
 
-    // Build the full timeline for the 72-hr window
-    const timeline = resolvedSlots.map((slot) => {
-      const s = scheduleMap.get(slot.scheduleId);
-      return {
-        scheduleId: slot.scheduleId,
-        priority:   slot.priority,
-        startAt:    slot.startAt.toISOString(),
-        endAt:      slot.endAt.toISOString(),
-        playlistId: s?.playlistId ?? null,
-        name:       s?.name ?? null,
-      };
-    });
+      // Resolve priority conflicts across the 72-hr window, honouring dayparting
+      const windows: ScheduleWindow[] = schedules.flatMap((s) =>
+        expandDaypart(s, now, windowEnd).map((w) => ({
+          scheduleId: s.id,
+          priority:   s.priority,
+          startAt:    w.startAt,
+          endAt:      w.endAt,
+        })),
+      );
+      const resolvedSlots = resolveConflicts(windows);
+
+      // Build a map for quick lookup of schedule data
+      const scheduleMap = new Map(schedules.map((s) => [s.id, s]));
+
+      // For backward-compat: primary schedule is the one active right now (or first upcoming)
+      const nowMs = now.getTime();
+      const currentSlot = resolvedSlots.find(
+        (sl) => sl.startAt.getTime() <= nowMs && sl.endAt.getTime() > nowMs,
+      ) ?? resolvedSlots[0];
+      const schedule = currentSlot ? scheduleMap.get(currentSlot.scheduleId) : undefined;
+      scheduleId = schedule?.id ?? null;
+      transition = schedule?.playlist.transition ?? 'NONE';
+
+      // Resolve the active playlist including any nested (Master → Internal) playlists.
+      // `items` stays the fully-flattened play order — identical semantics for legacy
+      // players and doubles as the download manifest; `nested` carries the tree for
+      // nesting-aware players (SMIL <seq>-in-<seq>: a nested playlist plays fully per visit).
+      const tree = schedule ? await resolvePlaylistTree(schedule.playlistId) : { nested: [], flat: [] };
+      items  = tree.flat;
+      nested = tree.nested;
+
+      // Build the full timeline for the 72-hr window
+      timeline = resolvedSlots.map((slot) => {
+        const s = scheduleMap.get(slot.scheduleId);
+        return {
+          scheduleId: slot.scheduleId,
+          priority:   slot.priority,
+          startAt:    slot.startAt.toISOString(),
+          endAt:      slot.endAt.toISOString(),
+          playlistId: s?.playlistId ?? null,
+          name:       s?.name ?? null,
+        };
+      });
+    }
 
     // ── Resolve active overlays for this device ─────────────────────────────
     const overlayOrConditions: Record<string, unknown>[] = [
@@ -296,7 +392,6 @@ export async function GET(req: NextRequest) {
       priority:    o.priority,
     }));
 
-    const transition = schedule?.playlist.transition ?? 'NONE';
 
     // Fleet-wide player behavior knobs (retry interval, transition duration, kiosk key
     // lock, download timeouts, fallback playlist). The scalar knobs are device-level
@@ -331,7 +426,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       planHash,
-      scheduleId: schedule?.id ?? null,
+      scheduleId,
       validUntil: windowEnd.toISOString(),
       forceSyncAt: device.forceSyncAt?.toISOString() ?? null,
       orientation: device.orientation,

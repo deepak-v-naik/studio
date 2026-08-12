@@ -117,12 +117,27 @@ model Store {
   kycVerifiedAt     DateTime? // timestamp when admin approved
   kycRejectedReason String? // admin's rejection note
   excludedZoneId    String? // footfall sensor zone ID to exclude from counts (staff area)
+
+  // ── Slot loop (fixed-loop ad inventory) ─────────────────────────────────────
+  // Inventory is sold by loop position + date, never clock time. loopSlotCount is
+  // ALSO the slot-mode switch: null = store plays its normal schedules/playlists;
+  // set (spec default 6) = the store's screen runs the fixed slot loop instead.
+  // Kept nullable rather than defaulted so enabling this feature never silently
+  // flips existing stores from their scheduled playlists to a house-ads loop.
+  loopSlotCount    Int?
+  openDays         Int    @default(127) // bitmask, bit0=Mon … bit6=Sun; closed days excluded from availability
+  hoursStart       String @default("09:00") // IST, loop plays hoursStart–hoursEnd
+  hoursEnd         String @default("21:00")
+  fillerCampaignId String? // override of the default house-ads filler campaign
+
   tier              String    @default("standard") // standard | premium — set via gated premium signup link
   monthlyCompensationPaise Int @default(50000) // monthly remuneration; ₹500 standard, ₹1000 premium
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
   user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fillerCampaign       Campaign?             @relation("StoreFiller", fields: [fillerCampaignId], references: [id], onDelete: SetNull)
+  slotBookings         SlotBooking[]
   devices              Device[]
   bills                Bill[]
   offers               StoreOffer[]
@@ -197,10 +212,17 @@ model Campaign {
   orderId        String?
   status         String   @default("upcoming") // upcoming | active | completed | cancelled
   creativeUrls   String[] @default([]) // R2 URLs of uploaded ad creatives
+  // The campaign's 10s slot creative (slot-loop inventory). creativeUrls are raw R2
+  // uploads without the md5/type the player cache needs, so slot playback goes
+  // through a proper Content row. A booked campaign without one plays as filler.
+  slotContentId  String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   brand                Brand?                @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  slotContent          Content?              @relation("CampaignSlotCreative", fields: [slotContentId], references: [id], onDelete: SetNull)
+  fillerForStores      Store[]               @relation("StoreFiller")
+  slotBookings         SlotBooking[]
   playEvents           PlayEvent[]
   screenPresenceEvents ScreenPresenceEvent[]
 
@@ -411,7 +433,8 @@ model Content {
   hevcMd5       String?
   hevcSizeBytes BigInt?
 
-  items PlaylistItem[]
+  items             PlaylistItem[]
+  slotCreativeFor   Campaign[]     @relation("CampaignSlotCreative")
 
   @@index([uploadedById])
   @@index([folder])
@@ -505,6 +528,33 @@ model Composition {
   @@index([isPreset])
 }
 
+// ─── Slot-loop inventory ─────────────────────────────────────────────────────
+// A screen in slot mode (Store.loopSlotCount set) runs a fixed loop of N 10-second
+// ad slots continuously through store hours. Inventory is sold by loop position +
+// date, never by clock time. Availability(store, date) = loopSlotCount − bookings.
+// Empty positions never go dark: with zero sales the whole loop plays the filler
+// (house-ads) campaign; otherwise empties are round-robined across the sold
+// campaigns as bonus plays — logged with isFiller=true but attributed to the
+// campaign, and NEVER counted against brand-facing availability.
+
+model SlotBooking {
+  id           String   @id @default(cuid())
+  storeId      String
+  date         DateTime @db.Date // IST calendar date the booking applies to
+  slotPosition Int      // 0-based position within the loop
+  campaignId   String
+  status       String   @default("booked") // reserved for future states; unassign = row delete
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  store    Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, date, slotPosition])
+  @@index([campaignId])
+  @@index([date])
+}
+
 // ─── Proof-of-play ───────────────────────────────────────────────────────────
 
 model PlayEvent {
@@ -517,6 +567,11 @@ model PlayEvent {
   endedAt     DateTime
   durationMs  Int
   tag         String? // free-form: brand/campaign external ID for billing attribution
+  // Slot-loop attribution (spec's play_logs — reuses this table): which loop position
+  // played, and whether it was a filler/bonus play (an empty slot redistributed to
+  // this campaign) vs a guaranteed booked slot. Null/false for non-slot playback.
+  slotPosition Int?
+  isFiller     Boolean @default(false)
   // Audience impressions + cost for CPI billing model (T2)
   impressions Int      @default(1)
   costPaise   Int      @default(0)
@@ -871,5 +926,8 @@ model PlayerConfig {
   // Playlist pushed by the per-screen "Test" action (admin > Screens). Kept short so a
   // liveness check confirms quickly. Falls back to the newest non-empty playlist.
   testPlaylistId           String?
+  // Default house-ads campaign for slot-loop filler (Store.fillerCampaignId overrides
+  // per store). Plain id, not a relation — a deleted campaign just means no filler.
+  fillerCampaignId         String?
   updatedAt                DateTime @updatedAt
 }

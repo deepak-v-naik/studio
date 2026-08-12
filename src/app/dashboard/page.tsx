@@ -35,6 +35,16 @@ type Analytics = {
   byCampaign: { campaignId: string; plays: number; watchMs: number }[];
 };
 
+// Slot-loop play accounting (see /api/brand/slot-stats). Guaranteed = what was
+// bought; bonus = free extra plays from unsold slots redistributed to this campaign.
+type SlotStats = {
+  guaranteedPerDay:    number;
+  bonusPerDay:         number;
+  totalPerDay:         number;
+  cumulativeBonus:     number;
+  cumulativeSlotPlays: number;
+};
+
 // ─── Animations ────────────────────────────────────────────────────────────────
 
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06, delayChildren: 0.04 } } };
@@ -114,6 +124,19 @@ function CampaignCard({ c, sheetsConnected, analytics }: { c: Campaign; sheetsCo
   const [exporting, setExporting] = useState(false);
   const [sheetUrl,  setSheetUrl]  = useState<string | null>(null);
   const [exportErr, setExportErr] = useState('');
+  const [slotStats, setSlotStats] = useState<SlotStats | null>(null);
+
+  // Slot-loop plays: guaranteed (booked slots × loop repeats/day) vs bonus (empty
+  // slots redistributed to this campaign). Only rendered once the campaign actually
+  // has slot inventory — non-slot campaigns show the existing stats unchanged.
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/brand/slot-stats?campaignId=${c.id}`)
+      .then((r) => r.ok ? r.json() as Promise<SlotStats> : null)
+      .then((s) => { if (live && s && (s.guaranteedPerDay > 0 || s.cumulativeSlotPlays > 0)) setSlotStats(s); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [c.id]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -152,6 +175,30 @@ function CampaignCard({ c, sheetsConnected, analytics }: { c: Campaign; sheetsCo
           </div>
         ))}
       </div>
+
+      {slotStats && (
+        <div className="rounded-lg border border-border bg-muted/20 p-3">
+          <div className="flex items-baseline justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Plays per day</p>
+            <p className="text-base font-black text-foreground">{slotStats.totalPerDay.toLocaleString('en-IN')}</p>
+          </div>
+          <div className="mt-2 space-y-1 text-[11px]">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Guaranteed</span>
+              <span className="font-semibold text-foreground">{slotStats.guaranteedPerDay.toLocaleString('en-IN')}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1 text-green-700"><Gift className="h-3 w-3" />Bonus</span>
+              <span className="font-semibold text-green-700">+{slotStats.bonusPerDay.toLocaleString('en-IN')}</span>
+            </div>
+          </div>
+          {slotStats.cumulativeBonus > 0 && (
+            <p className="mt-2 border-t border-border/60 pt-2 text-[10px] text-muted-foreground">
+              <span className="font-semibold text-green-700">{slotStats.cumulativeBonus.toLocaleString('en-IN')}</span> free bonus plays earned so far
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center justify-between border-t border-border pt-3 text-xs">
         <div>

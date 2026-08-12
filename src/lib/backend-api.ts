@@ -350,6 +350,53 @@ export const forceSyncDevice = (id: string) =>
 export const sendDeviceCommand = (id: string, type: 'reboot' | 'health_ping') =>
   apiFetch<{ ok: boolean }>(`/api/devices/${id}/command`, { method: 'POST', body: JSON.stringify({ type }) });
 
+// ─── Slot-loop inventory ──────────────────────────────────────────────────────
+// Fixed loop of N 10s ad slots per store, sold by loop position + date. Availability
+// is always sold-count based — filler/bonus fill is never "sold out". See lib/slots.ts.
+
+export type SlotStore = {
+  id: string; storeName: string; city: string | null;
+  loopSlotCount: number | null; openDays: number;
+  hoursStart: string; hoursEnd: string;
+  fillerCampaignId: string | null;
+  sold: Record<string, number | null> | null; // date → sold count; null = closed that day
+};
+
+export type SlotAvailability = {
+  dates: string[];
+  defaultFillerCampaignId: string | null;
+  stores: SlotStore[];
+};
+
+export type SlotBookingRow = {
+  id: string; slotPosition: number;
+  campaignId: string; campaignName: string; hasCreative: boolean;
+};
+
+export type SlotLoopEntry = {
+  slotPosition: number; campaignId: string; contentId: string; isFiller: boolean;
+};
+
+export const getSlotAvailability = (from: string, to: string) =>
+  apiFetch<SlotAvailability>(`/api/slots/availability?from=${from}&to=${to}`);
+
+export const getSlotBookings = (storeId: string, date: string) =>
+  apiFetch<{ loopSlotCount: number; bookings: SlotBookingRow[]; playableLoop: SlotLoopEntry[] }>(
+    `/api/slots/bookings?storeId=${storeId}&date=${date}`);
+
+export const assignSlot = (body: { storeId: string; date: string; slotPosition: number; campaignId: string }) =>
+  apiFetch<{ booking: { id: string } }>('/api/slots/bookings', { method: 'POST', body: JSON.stringify(body) });
+
+export const unassignSlot = (id: string) =>
+  apiFetch<{ ok: boolean }>(`/api/slots/bookings?id=${id}`, { method: 'DELETE' });
+
+export const updateSlotSettings = (body: {
+  storeId?: string; loopSlotCount?: number | null; openDays?: number;
+  hoursStart?: string; hoursEnd?: string; fillerCampaignId?: string | null;
+  defaultFillerCampaignId?: string | null;
+  campaignId?: string; slotContentId?: string | null;
+}) => apiFetch<Record<string, unknown>>('/api/slots/settings', { method: 'PATCH', body: JSON.stringify(body) });
+
 // ─── Overlays (on-screen layouts) ─────────────────────────────────────────────
 
 export type OverlayType     = 'TICKER' | 'NEWS_TICKER' | 'BANNER' | 'INFO_BAR';

@@ -28,6 +28,9 @@ export async function GET(req: NextRequest) {
       orderId:         c.orderId ?? null,
       status:          c.status,
       createdAt:       c.createdAt.toISOString(),
+      // Slot-loop 10s creative — a booked campaign without one can't render in a slot
+      // (its positions fall through to bonus/filler redistribution).
+      slotContentId:   c.slotContentId,
       trialOfferedAt:  c.brand?.trialOfferedAt?.toISOString() ?? null,
       trialUsedAt:     c.brand?.trialUsedAt?.toISOString()    ?? null,
     }));

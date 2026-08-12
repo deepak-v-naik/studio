@@ -199,6 +199,7 @@ curl https://wearealive.in/api/device/plan \
 | `validUntil` | `string` (ISO 8601) | Hint for when to re-poll. |
 | `forceSyncAt` | `string \| null` | Admin-triggered cache-bust timestamp. If the player's last cached `forceSyncAt` differs (or is older), invalidate the local content cache and re-download. |
 | `items` | `ContentItem[]` | Ordered list of content to download and play, **fully flattened** — nested playlists are already expanded into play order, so a player that only reads `items` plays the correct sequence. Empty if no schedule. |
+| _(slot mode)_ | — | When the device's store is in **slot mode** (a fixed loop of N 10-second ad slots, sold by loop position + date), `items` is that loop in position order and each item additionally carries `slotPosition` (0-based) and `isFiller` (true = a bonus/house play in an unsold position). `timeline` holds a single window covering the store's open hours for the day; closed days return no items. The player must echo `slotPosition`/`isFiller` back on the matching proof-of-play event. |
 | `nested` | `NestedNode[]` | Optional playlist tree for the active schedule. Present when the scheduled playlist nests other playlists (Master → Internal). Entries are either `{ "kind": "content", ...ContentItem }` or `{ "kind": "playlist", "playlistId", "name", "items": NestedNode[] }` (max depth 3). Semantics: a nested playlist plays **all** its items per visit (SMIL `<seq>`-in-`<seq>`), so depth-first traversal of `nested` equals `items`. Players that don't understand it can ignore it. |
 | `timeline` | `TimelineSlot[]` | Schedule windows with dayparting boundaries. |
 | `overlays` | `Overlay[]` | Active overlays (tickers / banners / news feeds) to render on top of content. May be empty. |
@@ -335,6 +336,8 @@ Authorization: Bearer <token>
 | `startedAt` | `string` (ISO 8601) | Yes | UTC time playback started |
 | `endedAt` | `string` (ISO 8601) | Yes | UTC time playback ended |
 | `durationMs` | `number` | Yes | Actual played duration in milliseconds |
+| `slotPosition` | `number` | No | Slot mode only — echo the played plan item's `slotPosition` verbatim |
+| `isFiller` | `boolean` | No | Slot mode only — echo the played plan item's `isFiller`; splits guaranteed vs bonus plays in brand reporting |
 
 **curl example**
 
