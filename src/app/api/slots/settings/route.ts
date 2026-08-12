@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { parseHHmm } from '@/lib/slots';
+import { istToday, parseHHmm } from '@/lib/slots';
 import { pushPlanUpdated } from '@/lib/fcm';
 
 function adminGuard(req: NextRequest) {
@@ -56,6 +56,33 @@ export async function PATCH(req: NextRequest) {
 
     if (body.loopSlotCount != null && (!Number.isInteger(body.loopSlotCount) || body.loopSlotCount < 1 || body.loopSlotCount > 60)) {
       return NextResponse.json({ error: 'loopSlotCount must be 1–60 (or null to disable slot mode)' }, { status: 400 });
+    }
+
+    // Growing the loop is always safe (new positions are simply unsold). Shrinking it —
+    // or leaving slot mode — can strand bookings above the new count: the player would
+    // stop playing them (buildSlotLoop ignores out-of-range positions) while the brand
+    // has already paid. Refuse, and say exactly what is in the way, so the admin can
+    // reassign those slots first. Past dates are ignored; they have already aired.
+    if (body.loopSlotCount !== undefined) {
+      const stranded = await db.slotBooking.findMany({
+        where: {
+          storeId: body.storeId,
+          date: { gte: new Date(`${istToday()}T00:00:00Z`) },
+          ...(body.loopSlotCount != null ? { slotPosition: { gte: body.loopSlotCount } } : {}),
+        },
+        select: { date: true, slotPosition: true, campaign: { select: { name: true } } },
+        orderBy: [{ date: 'asc' }, { slotPosition: 'asc' }],
+      });
+      if (stranded.length > 0) {
+        const first = stranded[0];
+        return NextResponse.json({
+          error: body.loopSlotCount == null
+            ? `Cannot turn off slot mode: ${stranded.length} upcoming booking(s) are still sold, starting ${first.date.toISOString().slice(0, 10)} (${first.campaign.name}). Clear them first.`
+            : `Cannot shrink to ${body.loopSlotCount} slots: ${stranded.length} upcoming booking(s) sit at position ${body.loopSlotCount + 1} or higher, starting ${first.date.toISOString().slice(0, 10)} (${first.campaign.name}, slot ${first.slotPosition + 1}). Reassign them to lower positions first.`,
+          strandedCount: stranded.length,
+          firstDate: first.date.toISOString().slice(0, 10),
+        }, { status: 409 });
+      }
     }
     if (body.openDays !== undefined && (!Number.isInteger(body.openDays) || body.openDays < 0 || body.openDays > 127)) {
       return NextResponse.json({ error: 'openDays must be a 7-bit Mon..Sun bitmask (0–127)' }, { status: 400 });

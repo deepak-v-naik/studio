@@ -360,10 +360,17 @@ function StoreSlotSettings({ store, campaigns, defaultFiller, onClose, onSaved }
           <div className={enabled ? '' : 'opacity-40 pointer-events-none'}>
             <div className="space-y-3">
               <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Slots per loop</label>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
+                  Slots per loop <span className="font-normal normal-case tracking-normal text-muted-foreground/70">— how many brands this store can run</span>
+                </label>
                 <input type="number" min={1} max={60} value={count} onChange={(e) => setCount(Number(e.target.value))}
                   className="w-24 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary" />
                 <span className="ml-2 text-[10px] text-muted-foreground">× 10s = {count * 10}s per loop</span>
+                {store.loopSlotCount != null && count < store.loopSlotCount && (
+                  <p className="mt-1 text-[10px] text-amber-600">
+                    Reducing from {store.loopSlotCount}. Upcoming bookings above slot {count} must be reassigned first — the save will tell you which.
+                  </p>
+                )}
               </div>
 
               <div>

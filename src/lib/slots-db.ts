@@ -24,25 +24,44 @@ export async function resolveFillerCampaign(
 }
 
 /** Sold-count availability per store per date, honouring open_days exclusion.
- *  Closed dates are returned with sold=null so UIs can grey them out. */
+ *  Closed dates are returned with sold=null so UIs can grey them out.
+ *
+ *  Only counts bookings INSIDE the store's current loop (slotPosition < loopSlotCount).
+ *  A shrunk loop can strand bookings above the new count; buildSlotLoop already ignores
+ *  those, so counting them here would report more sold than the loop has positions and
+ *  read as "sold out" on a store that still has free slots. The settings route blocks
+ *  shrinking past sold inventory, so strays should not exist — this keeps the arithmetic
+ *  honest regardless (legacy rows, direct DB edits). */
 export async function availabilityGrid(
   stores: { id: string; openDays: number; loopSlotCount: number }[],
   dates: string[],
 ): Promise<Map<string, Map<string, number | null>>> {
-  const storeIds = stores.map((s) => s.id);
-  const counts = storeIds.length && dates.length
-    ? await db.slotBooking.groupBy({
-        by: ['storeId', 'date'],
-        where: {
-          storeId: { in: storeIds },
-          date: { gte: new Date(`${dates[0]}T00:00:00Z`), lte: new Date(`${dates[dates.length - 1]}T00:00:00Z`) },
-        },
-        _count: { id: true },
-      })
-    : [];
   const countMap = new Map<string, number>();
-  for (const c of counts) {
-    countMap.set(`${c.storeId}|${c.date.toISOString().slice(0, 10)}`, c._count.id);
+  if (stores.length && dates.length) {
+    const dateFilter = {
+      gte: new Date(`${dates[0]}T00:00:00Z`),
+      lte: new Date(`${dates[dates.length - 1]}T00:00:00Z`),
+    };
+    // Stores can run different loop sizes, so bucket by size and issue one grouped
+    // query per distinct size (a handful at most) rather than per store.
+    const bySize = new Map<number, string[]>();
+    for (const s of stores) {
+      const list = bySize.get(s.loopSlotCount) ?? [];
+      list.push(s.id);
+      bySize.set(s.loopSlotCount, list);
+    }
+    const results = await Promise.all(
+      [...bySize.entries()].map(([loopSlotCount, storeIds]) =>
+        db.slotBooking.groupBy({
+          by: ['storeId', 'date'],
+          where: { storeId: { in: storeIds }, date: dateFilter, slotPosition: { lt: loopSlotCount } },
+          _count: { id: true },
+        }),
+      ),
+    );
+    for (const c of results.flat()) {
+      countMap.set(`${c.storeId}|${c.date.toISOString().slice(0, 10)}`, c._count.id);
+    }
   }
 
   const grid = new Map<string, Map<string, number | null>>();
