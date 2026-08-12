@@ -70,8 +70,8 @@ The only separate codebase is **ALIVE-Player** (Kotlin Android TV APK).
 ## Critical Conventions — Read These First
 
 **Auth — the biggest trap:**
-- Store partners use `localStorage` key `alive_store_session` — NOT next-auth sessions
-- API routes for store partners must NOT call `auth()` or check session — validate storeId against DB instead
+- Store partners (web): next-auth Credentials — the dashboard login calls `signIn('phone-password')`, which sets a session cookie. `localStorage` key `alive_store_session` is a *cache* of the store payload for instant render, and the fallback when no cookie exists yet (fresh registration, admin open-as-partner).
+- Store-partner API routes: authenticate with `resolveStoreId()` from `src/lib/store-partner-auth.ts` — accepts an explicit `storeId` param (mobile app, impersonation) and falls back to the next-auth session (web). Don't hand-roll `auth()` checks in these routes.
 - Admin routes: `admin-password` header checked against `ADMIN_PASSWORD` env var
 - Brands/admin: next-auth session via `auth()`
 
@@ -164,10 +164,11 @@ ALIVE_PLAYER_API.md                       — Android player integration guide
 
 ## Store Partner Auth Flow
 
-- `localStorage` key: `alive_store_session`
-- On registration: saves session to localStorage immediately
-- On login: checks localStorage → falls back to `/api/stores/login`
-- Session shape: `{ storeName, ownerName, whatsapp, phone, password, address, locality, city, pincode, lat, lng, referralCode, referredBy, agreedAt, screens: 1 }`
+- Web login: next-auth `signIn('phone-password')` (Credentials provider) sets the session cookie, then the dashboard fetches `/api/stores/me` and caches the store payload in `localStorage` key `alive_store_session`
+- Registration saves the payload to localStorage immediately — no cookie yet; the dashboard runs from this cache until the first real login
+- Mobile app (`store-app/`): no cookies — calls store APIs with an explicit `storeId` param, resolved by `resolveStoreId()`
+- `/api/stores/login` is the credential-check route used by the mobile app; the web form uses next-auth instead
+- Session/cache shape: `StoreSession` in `shared/store-types.ts` (no password stored)
 
 **Business rules:**
 - Fixed ₹500/month per screen (clause 3.3 of agreement)
