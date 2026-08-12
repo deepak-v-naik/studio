@@ -39,15 +39,27 @@ export async function GET(req: NextRequest) {
     let deviceCount = 0;
     let tier = 'standard';
     let monthlyCompensationPaise = 50000;
+    let payout: { payoutMethod: string | null; upiId: string | null; bankAccountName: string | null; bankAccountNo: string | null; bankIfsc: string | null; bankName: string | null } =
+      { payoutMethod: null, upiId: null, bankAccountName: null, bankAccountNo: null, bankIfsc: null, bankName: null };
     try {
-      const extra = await db.$queryRaw<{ liveAt: Date | null; onboardingStage: string | null; tier: string | null; monthlyCompensationPaise: number | null }[]>`
-        SELECT "liveAt", "onboardingStage", "tier", "monthlyCompensationPaise" FROM "Store" WHERE "id" = ${storeId} LIMIT 1
+      const extra = await db.$queryRaw<{ liveAt: Date | null; onboardingStage: string | null; tier: string | null; monthlyCompensationPaise: number | null; payoutMethod: string | null; upiId: string | null; bankAccountName: string | null; bankAccountNo: string | null; bankIfsc: string | null; bankName: string | null }[]>`
+        SELECT "liveAt", "onboardingStage", "tier", "monthlyCompensationPaise",
+               "payoutMethod", "upiId", "bankAccountName", "bankAccountNo", "bankIfsc", "bankName"
+        FROM "Store" WHERE "id" = ${storeId} LIMIT 1
       `;
       const v = extra[0]?.liveAt;
       liveAt = v instanceof Date ? v.toISOString() : (v ?? null);
       onboardingStage = extra[0]?.onboardingStage ?? null;
       tier = extra[0]?.tier ?? 'standard';
       monthlyCompensationPaise = Number(extra[0]?.monthlyCompensationPaise ?? 50000);
+      payout = {
+        payoutMethod:    extra[0]?.payoutMethod    ?? null,
+        upiId:           extra[0]?.upiId           ?? null,
+        bankAccountName: extra[0]?.bankAccountName ?? null,
+        bankAccountNo:   extra[0]?.bankAccountNo   ?? null,
+        bankIfsc:        extra[0]?.bankIfsc        ?? null,
+        bankName:        extra[0]?.bankName        ?? null,
+      };
     } catch { /* column not yet migrated — safe default null */ }
 
     // Count linked devices for store overview
@@ -80,6 +92,7 @@ export async function GET(req: NextRequest) {
       deviceCount,
       tier,
       monthlyCompensationPaise,
+      ...payout,
       createdAt:       s.createdAt instanceof Date ? s.createdAt.toISOString() : s.createdAt,
       // from User join
       email:        (s as unknown as { email?: string }).email ?? null,
