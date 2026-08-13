@@ -340,7 +340,7 @@ function StoreSlotSettings({ store, campaigns, defaultFiller, onClose, onSaved }
       toast(moved.length
         ? {
             title: `Saved — ${moved.length} booking${moved.length > 1 ? 's' : ''} moved ✓`,
-            description: `${[...new Set(moved.map((m) => m.campaignName))].join(', ')} kept their plays at lower slot numbers. The brands have been emailed.`,
+            description: `${[...new Set(moved.map((m) => m.campaignName))].join(', ')} kept their plays at lower slot numbers. Shown on their dashboards; no email sent.`,
           }
         : { title: 'Slot settings saved ✓' });
       onSaved();
@@ -374,7 +374,7 @@ function StoreSlotSettings({ store, campaigns, defaultFiller, onClose, onSaved }
                 <span className="ml-2 text-[10px] text-muted-foreground">× 10s = {count * 10}s per loop</span>
                 {store.loopSlotCount != null && count < store.loopSlotCount && (
                   <p className="mt-1 text-[10px] text-amber-600">
-                    Reducing from {store.loopSlotCount}. Upcoming bookings above slot {count} move down into free slots automatically and the brands are emailed. Only a day with more bookings than {count} will block the change.
+                    Reducing from {store.loopSlotCount}. Upcoming bookings above slot {count} move down into free slots automatically, and the brands see it on their dashboard. Only a day with more bookings than {count} will block the change.
                   </p>
                 )}
               </div>

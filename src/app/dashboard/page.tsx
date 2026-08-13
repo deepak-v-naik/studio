@@ -43,6 +43,9 @@ type SlotStats = {
   totalPerDay:         number;
   cumulativeBonus:     number;
   cumulativeSlotPlays: number;
+  // Slot moves from a store resizing its ad loop. Surfaced here rather than emailed —
+  // nothing the brand bought changes, so it belongs beside their numbers.
+  recentMoves?:        { storeName: string; dates: string[]; at: string }[];
 };
 
 // ─── Animations ────────────────────────────────────────────────────────────────
@@ -192,9 +195,19 @@ function CampaignCard({ c, sheetsConnected, analytics }: { c: Campaign; sheetsCo
               <span className="font-semibold text-green-700">+{slotStats.bonusPerDay.toLocaleString('en-IN')}</span>
             </div>
           </div>
-          {slotStats.cumulativeBonus > 0 && (
-            <p className="mt-2 border-t border-border/60 pt-2 text-[10px] text-muted-foreground">
-              <span className="font-semibold text-green-700">{slotStats.cumulativeBonus.toLocaleString('en-IN')}</span> free bonus plays earned so far
+          <p className="mt-2 border-t border-border/60 pt-2 text-[10px] leading-relaxed text-muted-foreground">
+            {slotStats.cumulativeBonus > 0 && (
+              <><span className="font-semibold text-green-700">{slotStats.cumulativeBonus.toLocaleString('en-IN')}</span> free bonus plays earned so far. </>
+            )}
+            When a slot in a store&apos;s loop is unsold, we replay the ads that are sold instead of filler — so your ad runs more often than you paid for, at no extra cost.
+          </p>
+          {!!slotStats.recentMoves?.length && (
+            <p className="mt-2 border-t border-border/60 pt-2 text-[10px] leading-relaxed text-muted-foreground">
+              {slotStats.recentMoves.map((m) => (
+                <span key={`${m.storeName}-${m.at}`} className="block">
+                  We reorganised the loop at <span className="font-semibold text-foreground">{m.storeName}</span>, so your ad moved position on {m.dates.length > 1 ? `${m.dates[0]}–${m.dates[m.dates.length - 1]}` : m.dates[0]}. Your plays and dates are unchanged.
+                </span>
+              ))}
             </p>
           )}
         </div>

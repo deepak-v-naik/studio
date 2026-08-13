@@ -8,22 +8,24 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { loopRepeatsPerDay, parseHHmm } from '@/lib/slots';
+import { parseHHmm } from '@/lib/slots';
 import { applySlotMoves, planSlotCompaction, type SlotMove } from '@/lib/slots-db';
-import { notifyBrand, slotReassignedMsg } from '@/lib/notify';
 import { pushPlanUpdated } from '@/lib/fcm';
 
 /**
- * Records the reassignment and tells each affected brand. Grouped per campaign so a
- * brand gets one message however many of its slots moved. Best-effort throughout —
- * a failed notification must not roll back a resize that already applied.
+ * Writes the reassignment note. This is also what the brand dashboard reads back to
+ * show the affected brand what happened (via /api/brand/slot-stats) — deliberately no
+ * outbound email/WhatsApp for now, so brands learn about it when they next look at
+ * their dashboard rather than getting messaged about an internal loop change.
+ *
+ * `campaignIds` duplicates the ids inside `moves` as a flat array purely so the
+ * dashboard can filter these rows by campaign with a simple JSON containment query.
  */
-async function recordAndAnnounceMoves(
-  store: { id: string; storeName: string; loopSlotCount: number | null; hoursStart: string; hoursEnd: string },
+async function recordMoves(
+  store: { id: string; storeName: string; loopSlotCount: number | null },
   moves: SlotMove[],
 ): Promise<void> {
   if (moves.length === 0) return;
-
   await db.auditLog.create({
     data: {
       action: 'slot_loop_resized',
@@ -32,6 +34,7 @@ async function recordAndAnnounceMoves(
         storeName:     store.storeName,
         loopSlotCount: store.loopSlotCount,
         movedCount:    moves.length,
+        campaignIds:   [...new Set(moves.map((m) => m.campaignId))],
         moves: moves.map((m) => ({
           date: m.date, from: m.from, to: m.to,
           campaignId: m.campaignId, campaignName: m.campaignName,
@@ -39,41 +42,6 @@ async function recordAndAnnounceMoves(
       },
     },
   }).catch(() => { /* the note is valuable, but never worth failing the resize over */ });
-
-  const byCampaign = new Map<string, SlotMove[]>();
-  for (const m of moves) {
-    const list = byCampaign.get(m.campaignId) ?? [];
-    list.push(m);
-    byCampaign.set(m.campaignId, list);
-  }
-
-  const campaigns = await db.campaign.findMany({
-    where:  { id: { in: [...byCampaign.keys()] } },
-    select: { id: true, name: true, email: true, phone: true },
-  });
-
-  const guaranteedPerDay = store.loopSlotCount != null
-    ? loopRepeatsPerDay({
-        loopSlotCount: store.loopSlotCount,
-        hoursStart:    store.hoursStart,
-        hoursEnd:      store.hoursEnd,
-      })
-    : null;
-
-  await Promise.allSettled(campaigns.map((c) => {
-    const cMoves = byCampaign.get(c.id) ?? [];
-    if (!c.email && !c.phone) return Promise.resolve();
-    return notifyBrand(
-      { email: c.email, phone: c.phone },
-      `Your ALIVE slot at ${store.storeName} moved`,
-      slotReassignedMsg({
-        brandName:  c.name,
-        storeName:  store.storeName,
-        moves:      cMoves.map((m) => ({ date: m.date, from: m.from, to: m.to })),
-        guaranteedPerDay: guaranteedPerDay != null ? guaranteedPerDay * cMoves.length : null,
-      }),
-    );
-  }));
 }
 
 function adminGuard(req: NextRequest) {
@@ -171,8 +139,8 @@ export async function PATCH(req: NextRequest) {
       },
     });
 
-    // Audit note + brand emails/WhatsApps, after the resize is committed.
-    void recordAndAnnounceMoves(store, moves);
+    // Audit note, after the resize is committed. The brand dashboard reads it back.
+    void recordMoves(store, moves);
 
     db.device.findMany({ where: { storeId: store.id }, select: { id: true } })
       .then((devices) => pushPlanUpdated(devices.map((d) => d.id)))

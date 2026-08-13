@@ -12,6 +12,44 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { istToday, loopRepeatsPerDay } from '@/lib/slots';
 
+type SlotMoveNote = { storeName: string; dates: string[]; at: string };
+
+/**
+ * Slot reassignments touching this campaign in the last 30 days, read back from the
+ * audit notes written when a store's loop was resized (see /api/slots/settings).
+ * Never throws — a stat card must not break because an audit row is shaped oddly.
+ */
+async function recentSlotMoves(campaignId: string): Promise<SlotMoveNote[]> {
+  try {
+    const rows = await db.auditLog.findMany({
+      where: {
+        action:    'slot_loop_resized',
+        createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) },
+        meta:      { path: ['campaignIds'], array_contains: campaignId },
+      },
+      select:  { createdAt: true, meta: true },
+      orderBy: { createdAt: 'desc' },
+      take:    5,
+    });
+
+    return rows.flatMap((row) => {
+      const meta = row.meta as {
+        storeName?: string;
+        moves?: { date?: string; campaignId?: string }[];
+      } | null;
+      const dates = [...new Set(
+        (meta?.moves ?? [])
+          .filter((m) => m.campaignId === campaignId && typeof m.date === 'string')
+          .map((m) => m.date as string),
+      )].sort();
+      if (dates.length === 0) return [];
+      return [{ storeName: meta?.storeName ?? 'a store', dates, at: row.createdAt.toISOString() }];
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -59,12 +97,18 @@ export async function GET(req: NextRequest) {
     const playDays = new Set(slotEvents.map((e) => e.startedAt.toISOString().slice(0, 10))).size;
     const bonusPerDay = playDays > 0 ? Math.round(bonusTotal / playDays) : 0;
 
+    // Slot moves affecting this campaign (a store resized its loop, so we packed the
+    // booking into a different position). Shown in the dashboard rather than emailed —
+    // it changes nothing the brand bought, so it belongs where they check their numbers.
+    const recentMoves = await recentSlotMoves(campaignId);
+
     return NextResponse.json({
       guaranteedPerDay,
       bonusPerDay,
       totalPerDay: guaranteedPerDay + bonusPerDay,
       cumulativeBonus: bonusTotal,
       cumulativeSlotPlays: slotEvents.length,
+      recentMoves,
     });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
