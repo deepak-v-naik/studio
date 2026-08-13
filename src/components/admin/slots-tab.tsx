@@ -330,13 +330,19 @@ function StoreSlotSettings({ store, campaigns, defaultFiller, onClose, onSaved }
   const save = async () => {
     setSaving(true);
     try {
-      await updateSlotSettings({
+      const res = await updateSlotSettings({
         storeId: store.id,
         loopSlotCount: enabled ? count : null,
         openDays, hoursStart: start, hoursEnd: end,
         fillerCampaignId: filler || null,
       });
-      toast({ title: 'Slot settings saved ✓' });
+      const moved = res.reassigned ?? [];
+      toast(moved.length
+        ? {
+            title: `Saved — ${moved.length} booking${moved.length > 1 ? 's' : ''} moved ✓`,
+            description: `${[...new Set(moved.map((m) => m.campaignName))].join(', ')} kept their plays at lower slot numbers. The brands have been emailed.`,
+          }
+        : { title: 'Slot settings saved ✓' });
       onSaved();
     } catch (e) {
       toast({ variant: 'destructive', title: 'Save failed', description: (e as Error).message });
@@ -368,7 +374,7 @@ function StoreSlotSettings({ store, campaigns, defaultFiller, onClose, onSaved }
                 <span className="ml-2 text-[10px] text-muted-foreground">× 10s = {count * 10}s per loop</span>
                 {store.loopSlotCount != null && count < store.loopSlotCount && (
                   <p className="mt-1 text-[10px] text-amber-600">
-                    Reducing from {store.loopSlotCount}. Upcoming bookings above slot {count} must be reassigned first — the save will tell you which.
+                    Reducing from {store.loopSlotCount}. Upcoming bookings above slot {count} move down into free slots automatically and the brands are emailed. Only a day with more bookings than {count} will block the change.
                   </p>
                 )}
               </div>

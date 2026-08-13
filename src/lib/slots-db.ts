@@ -2,7 +2,94 @@
 // math there stays pure (no Prisma import) and unit-testable.
 
 import { db } from '@/lib/db';
-import { isOpenOn } from '@/lib/slots';
+import { isOpenOn, istToday } from '@/lib/slots';
+
+// ── Loop resizing ─────────────────────────────────────────────────────────────
+
+export type SlotMove = {
+  bookingId:    string;
+  date:         string;
+  from:         number;
+  to:           number;
+  campaignId:   string;
+  campaignName: string;
+};
+
+export type CompactionPlan =
+  | { ok: true;  moves: SlotMove[] }
+  | { ok: false; date: string; stranded: number; free: number };
+
+/**
+ * Plans how to fit a store's upcoming bookings into a loop of `newCount` positions.
+ *
+ * Shrinking the loop strands any booking at position >= newCount: the player skips
+ * out-of-range positions, so a paid slot would silently stop playing. Rather than
+ * blocking the resize, pack those bookings down into whatever positions are free on
+ * the same date — the loop position is an internal detail, not something a brand buys,
+ * so moving it costs them nothing (every slot plays once per loop either way).
+ *
+ * Only reports failure when a date genuinely has more bookings than the new loop can
+ * hold — real oversell, which needs a human decision about who to drop. Planning is
+ * all-or-nothing across dates so a rejected resize never half-applies.
+ *
+ * Past dates are ignored: they have already aired and their play logs are history.
+ * newCount = 0 (leaving slot mode) naturally has no free positions, so any upcoming
+ * booking blocks it.
+ */
+export async function planSlotCompaction(storeId: string, newCount: number): Promise<CompactionPlan> {
+  const upcoming = await db.slotBooking.findMany({
+    where:  { storeId, date: { gte: new Date(`${istToday()}T00:00:00Z`) } },
+    select: {
+      id: true, date: true, slotPosition: true, campaignId: true,
+      campaign: { select: { name: true } },
+    },
+    orderBy: [{ date: 'asc' }, { slotPosition: 'asc' }],
+  });
+
+  const byDate = new Map<string, typeof upcoming>();
+  for (const b of upcoming) {
+    const key = b.date.toISOString().slice(0, 10);
+    const list = byDate.get(key) ?? [];
+    list.push(b);
+    byDate.set(key, list);
+  }
+
+  const moves: SlotMove[] = [];
+  for (const [date, rows] of byDate) {
+    const stranded = rows.filter((r) => r.slotPosition >= newCount);
+    if (stranded.length === 0) continue;
+
+    const taken = new Set(rows.filter((r) => r.slotPosition < newCount).map((r) => r.slotPosition));
+    const free: number[] = [];
+    for (let p = 0; p < newCount && free.length < stranded.length; p++) {
+      if (!taken.has(p)) free.push(p);
+    }
+    if (free.length < stranded.length) {
+      return { ok: false, date, stranded: stranded.length, free: free.length };
+    }
+    stranded.forEach((s, i) => moves.push({
+      bookingId:    s.id,
+      date,
+      from:         s.slotPosition,
+      to:           free[i],
+      campaignId:   s.campaignId,
+      campaignName: s.campaign.name,
+    }));
+  }
+  return { ok: true, moves };
+}
+
+/** Applies a planned compaction. Single transaction — a partially-moved loop would
+ *  leave some paid slots unplayable, which is exactly what this is preventing. */
+export async function applySlotMoves(moves: SlotMove[]): Promise<void> {
+  if (moves.length === 0) return;
+  await db.$transaction(
+    moves.map((m) => db.slotBooking.update({
+      where: { id: m.bookingId },
+      data:  { slotPosition: m.to },
+    })),
+  );
+}
 
 /** Resolves the effective filler campaign for a store: per-store override, else the
  *  global PlayerConfig default. Null when neither is set or the campaign has no

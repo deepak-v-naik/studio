@@ -73,5 +73,42 @@ eq('all days open',       isOpenOn(127, '2026-08-16'), true);
 eq('Sunday closed',       isOpenOn(0b0111111, '2026-08-16'), false);
 eq('Mon–Fri open on Mon', isOpenOn(0b0011111, '2026-08-10'), true);
 
+// Loop-shrink compaction: mirrors planSlotCompaction's per-date packing (that function
+// is DB-bound, so the packing rule itself is exercised here on the same inputs).
+function packDate(rows, newCount) {
+  const stranded = rows.filter((r) => r.slotPosition >= newCount);
+  if (!stranded.length) return { ok: true, moves: [] };
+  const taken = new Set(rows.filter((r) => r.slotPosition < newCount).map((r) => r.slotPosition));
+  const free = [];
+  for (let p = 0; p < newCount && free.length < stranded.length; p++) if (!taken.has(p)) free.push(p);
+  if (free.length < stranded.length) return { ok: false, stranded: stranded.length, free: free.length };
+  return { ok: true, moves: stranded.map((s, i) => `${s.slotPosition}→${free[i]}`) };
+}
+const at = (...positions) => positions.map((p) => ({ slotPosition: p }));
+
+console.log('loop shrink — auto-reassign where there is room');
+
+// 15 → 8 with sales spread past the new limit: the high slots pack into the free lows.
+eq('15→8 packs stranded bookings into free low slots',
+  packDate(at(0, 3, 9, 12), 8), { ok: true, moves: ['9→1', '12→2'] });
+
+eq('nothing above the new count → no moves',
+  packDate(at(0, 1, 2), 8), { ok: true, moves: [] });
+
+eq('growing the loop never moves anything',
+  packDate(at(0, 5, 7), 15), { ok: true, moves: [] });
+
+// Exactly full is still fine — every stranded booking finds a hole.
+eq('exactly enough room → all packed',
+  packDate(at(0, 1, 9, 10), 4), { ok: true, moves: ['9→2', '10→3'] });
+
+// Real oversell: more sold slots than the new loop can hold. Must block, not silently drop.
+eq('more bookings than the new loop holds → blocked',
+  packDate(at(0, 1, 2, 9), 3), { ok: false, stranded: 1, free: 0 });
+
+// Leaving slot mode entirely (count 0) has nowhere to put a sold slot.
+eq('turning slot mode off with sold slots → blocked',
+  packDate(at(0), 0), { ok: false, stranded: 1, free: 0 });
+
 console.log(failures === 0 ? '\nAll slot rules verified.' : `\n${failures} failure(s).`);
 process.exit(failures === 0 ? 0 : 1);

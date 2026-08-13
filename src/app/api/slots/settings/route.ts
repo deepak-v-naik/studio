@@ -8,8 +8,73 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { istToday, parseHHmm } from '@/lib/slots';
+import { loopRepeatsPerDay, parseHHmm } from '@/lib/slots';
+import { applySlotMoves, planSlotCompaction, type SlotMove } from '@/lib/slots-db';
+import { notifyBrand, slotReassignedMsg } from '@/lib/notify';
 import { pushPlanUpdated } from '@/lib/fcm';
+
+/**
+ * Records the reassignment and tells each affected brand. Grouped per campaign so a
+ * brand gets one message however many of its slots moved. Best-effort throughout —
+ * a failed notification must not roll back a resize that already applied.
+ */
+async function recordAndAnnounceMoves(
+  store: { id: string; storeName: string; loopSlotCount: number | null; hoursStart: string; hoursEnd: string },
+  moves: SlotMove[],
+): Promise<void> {
+  if (moves.length === 0) return;
+
+  await db.auditLog.create({
+    data: {
+      action: 'slot_loop_resized',
+      target: store.id,
+      meta: {
+        storeName:     store.storeName,
+        loopSlotCount: store.loopSlotCount,
+        movedCount:    moves.length,
+        moves: moves.map((m) => ({
+          date: m.date, from: m.from, to: m.to,
+          campaignId: m.campaignId, campaignName: m.campaignName,
+        })),
+      },
+    },
+  }).catch(() => { /* the note is valuable, but never worth failing the resize over */ });
+
+  const byCampaign = new Map<string, SlotMove[]>();
+  for (const m of moves) {
+    const list = byCampaign.get(m.campaignId) ?? [];
+    list.push(m);
+    byCampaign.set(m.campaignId, list);
+  }
+
+  const campaigns = await db.campaign.findMany({
+    where:  { id: { in: [...byCampaign.keys()] } },
+    select: { id: true, name: true, email: true, phone: true },
+  });
+
+  const guaranteedPerDay = store.loopSlotCount != null
+    ? loopRepeatsPerDay({
+        loopSlotCount: store.loopSlotCount,
+        hoursStart:    store.hoursStart,
+        hoursEnd:      store.hoursEnd,
+      })
+    : null;
+
+  await Promise.allSettled(campaigns.map((c) => {
+    const cMoves = byCampaign.get(c.id) ?? [];
+    if (!c.email && !c.phone) return Promise.resolve();
+    return notifyBrand(
+      { email: c.email, phone: c.phone },
+      `Your ALIVE slot at ${store.storeName} moved`,
+      slotReassignedMsg({
+        brandName:  c.name,
+        storeName:  store.storeName,
+        moves:      cMoves.map((m) => ({ date: m.date, from: m.from, to: m.to })),
+        guaranteedPerDay: guaranteedPerDay != null ? guaranteedPerDay * cMoves.length : null,
+      }),
+    );
+  }));
+}
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
@@ -59,30 +124,24 @@ export async function PATCH(req: NextRequest) {
     }
 
     // Growing the loop is always safe (new positions are simply unsold). Shrinking it —
-    // or leaving slot mode — can strand bookings above the new count: the player would
-    // stop playing them (buildSlotLoop ignores out-of-range positions) while the brand
-    // has already paid. Refuse, and say exactly what is in the way, so the admin can
-    // reassign those slots first. Past dates are ignored; they have already aired.
+    // or leaving slot mode — strands bookings above the new count: the player skips
+    // out-of-range positions, so a paid slot would silently stop playing. Pack those
+    // down into free positions on the same date instead of refusing; a loop position is
+    // an internal detail rather than something a brand buys, and every slot plays once
+    // per loop regardless. Only a genuine oversell (more bookings than the new loop
+    // holds) still blocks, because that needs a human to decide who gets dropped.
+    let moves: SlotMove[] = [];
     if (body.loopSlotCount !== undefined) {
-      const stranded = await db.slotBooking.findMany({
-        where: {
-          storeId: body.storeId,
-          date: { gte: new Date(`${istToday()}T00:00:00Z`) },
-          ...(body.loopSlotCount != null ? { slotPosition: { gte: body.loopSlotCount } } : {}),
-        },
-        select: { date: true, slotPosition: true, campaign: { select: { name: true } } },
-        orderBy: [{ date: 'asc' }, { slotPosition: 'asc' }],
-      });
-      if (stranded.length > 0) {
-        const first = stranded[0];
+      const plan = await planSlotCompaction(body.storeId, body.loopSlotCount ?? 0);
+      if (!plan.ok) {
         return NextResponse.json({
           error: body.loopSlotCount == null
-            ? `Cannot turn off slot mode: ${stranded.length} upcoming booking(s) are still sold, starting ${first.date.toISOString().slice(0, 10)} (${first.campaign.name}). Clear them first.`
-            : `Cannot shrink to ${body.loopSlotCount} slots: ${stranded.length} upcoming booking(s) sit at position ${body.loopSlotCount + 1} or higher, starting ${first.date.toISOString().slice(0, 10)} (${first.campaign.name}, slot ${first.slotPosition + 1}). Reassign them to lower positions first.`,
-          strandedCount: stranded.length,
-          firstDate: first.date.toISOString().slice(0, 10),
+            ? `Cannot turn off slot mode: ${plan.stranded} booking(s) are still sold on ${plan.date} and later. Clear them first.`
+            : `Cannot shrink to ${body.loopSlotCount} slots: ${plan.date} has ${plan.stranded} booking(s) that need re-homing but only ${plan.free} free position(s). Free up slots on that date, or pick a larger number.`,
+          date: plan.date, stranded: plan.stranded, free: plan.free,
         }, { status: 409 });
       }
+      moves = plan.moves;
     }
     if (body.openDays !== undefined && (!Number.isInteger(body.openDays) || body.openDays < 0 || body.openDays > 127)) {
       return NextResponse.json({ error: 'openDays must be a 7-bit Mon..Sun bitmask (0–127)' }, { status: 400 });
@@ -92,6 +151,10 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: `${f} must be HH:mm` }, { status: 400 });
       }
     }
+
+    // Re-home the stranded bookings BEFORE narrowing the loop, so there is no window
+    // where a device could fetch a plan that drops slots the brands have paid for.
+    await applySlotMoves(moves);
 
     const store = await db.store.update({
       where: { id: body.storeId },
@@ -103,16 +166,25 @@ export async function PATCH(req: NextRequest) {
         ...(body.fillerCampaignId !== undefined ? { fillerCampaignId: body.fillerCampaignId } : {}),
       },
       select: {
-        id: true, loopSlotCount: true, openDays: true,
+        id: true, storeName: true, loopSlotCount: true, openDays: true,
         hoursStart: true, hoursEnd: true, fillerCampaignId: true,
       },
     });
+
+    // Audit note + brand emails/WhatsApps, after the resize is committed.
+    void recordAndAnnounceMoves(store, moves);
 
     db.device.findMany({ where: { storeId: store.id }, select: { id: true } })
       .then((devices) => pushPlanUpdated(devices.map((d) => d.id)))
       .catch(() => {});
 
-    return NextResponse.json({ store });
+    return NextResponse.json({
+      store,
+      // Surfaced so the admin sees what the resize did rather than it happening silently.
+      reassigned: moves.map((m) => ({
+        date: m.date, from: m.from + 1, to: m.to + 1, campaignName: m.campaignName,
+      })),
+    });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

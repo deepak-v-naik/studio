@@ -390,12 +390,19 @@ export const assignSlot = (body: { storeId: string; date: string; slotPosition: 
 export const unassignSlot = (id: string) =>
   apiFetch<{ ok: boolean }>(`/api/slots/bookings?id=${id}`, { method: 'DELETE' });
 
+// Shrinking a loop auto-packs stranded bookings into free lower positions; `reassigned`
+// reports what moved (1-based slot numbers) so the admin isn't left guessing.
+export type SlotSettingsResult = {
+  store?: { id: string; loopSlotCount: number | null };
+  reassigned?: { date: string; from: number; to: number; campaignName: string }[];
+};
+
 export const updateSlotSettings = (body: {
   storeId?: string; loopSlotCount?: number | null; openDays?: number;
   hoursStart?: string; hoursEnd?: string; fillerCampaignId?: string | null;
   defaultFillerCampaignId?: string | null;
   campaignId?: string; slotContentId?: string | null;
-}) => apiFetch<Record<string, unknown>>('/api/slots/settings', { method: 'PATCH', body: JSON.stringify(body) });
+}) => apiFetch<SlotSettingsResult>('/api/slots/settings', { method: 'PATCH', body: JSON.stringify(body) });
 
 // ─── Overlays (on-screen layouts) ─────────────────────────────────────────────
 
