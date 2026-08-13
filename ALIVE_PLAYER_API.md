@@ -198,7 +198,9 @@ curl https://wearealive.in/api/device/plan \
 | `scheduleId` | `string \| null` | Active schedule ID, or `null` if no schedule is assigned. |
 | `validUntil` | `string` (ISO 8601) | Hint for when to re-poll. |
 | `forceSyncAt` | `string \| null` | Admin-triggered cache-bust timestamp. If the player's last cached `forceSyncAt` differs (or is older), invalidate the local content cache and re-download. |
-| `items` | `ContentItem[]` | Ordered list of content to download and play. Empty if no schedule. |
+| `items` | `ContentItem[]` | Ordered list of content to download and play, **fully flattened** — nested playlists are already expanded into play order, so a player that only reads `items` plays the correct sequence. Empty if no schedule. |
+| _(slot mode)_ | — | When the device's store is in **slot mode** (a fixed loop of N 10-second ad slots, sold by loop position + date), `items` is that loop in position order and each item additionally carries `slotPosition` (0-based) and `isFiller` (true = a bonus/house play in an unsold position). `timeline` holds a single window covering the store's open hours for the day; closed days return no items. The player must echo `slotPosition`/`isFiller` back on the matching proof-of-play event. |
+| `nested` | `NestedNode[]` | Optional playlist tree for the active schedule. Present when the scheduled playlist nests other playlists (Master → Internal). Entries are either `{ "kind": "content", ...ContentItem }` or `{ "kind": "playlist", "playlistId", "name", "items": NestedNode[] }` (max depth 3). Semantics: a nested playlist plays **all** its items per visit (SMIL `<seq>`-in-`<seq>`), so depth-first traversal of `nested` equals `items`. Players that don't understand it can ignore it. |
 | `timeline` | `TimelineSlot[]` | Schedule windows with dayparting boundaries. |
 | `overlays` | `Overlay[]` | Active overlays (tickers / banners / news feeds) to render on top of content. May be empty. |
 
@@ -318,7 +320,9 @@ Authorization: Bearer <token>
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `events` | `PlayEventInput[]` | Yes | Batch of play events (max 500 per request) |
+| `events` | `PlayEventInput[]` | Yes | Batch of play events (max 500 per request). May be empty for a telemetry-only heartbeat. |
+| `telemetry` | `TelemetryInput` | No | Device health snapshot (app/Android version, free storage, playback-alive timestamp, last stall). Updates the device row. |
+| `incidents` | `IncidentInput[]` | No | Locally-recorded incidents to ship to the server (max 50 per request). Each is `{ "type": "UNCAUGHT_EXCEPTION" \| "STUCK_PLAYBACK" \| "FALLBACK_TRIGGERED", "atMs": <epoch ms>, "metadata": "<stack trace or context>" }`. Stored as telemetry events (`route=player/incident`) for fleet-wide failure categorization; delete local rows only after a 2xx. |
 
 **PlayEventInput fields**
 
@@ -332,6 +336,8 @@ Authorization: Bearer <token>
 | `startedAt` | `string` (ISO 8601) | Yes | UTC time playback started |
 | `endedAt` | `string` (ISO 8601) | Yes | UTC time playback ended |
 | `durationMs` | `number` | Yes | Actual played duration in milliseconds |
+| `slotPosition` | `number` | No | Slot mode only — echo the played plan item's `slotPosition` verbatim |
+| `isFiller` | `boolean` | No | Slot mode only — echo the played plan item's `isFiller`; splits guaranteed vs bonus plays in brand reporting |
 
 **curl example**
 

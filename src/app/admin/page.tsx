@@ -11,7 +11,7 @@ import {
   // New icons for the redesign
   MonitorPlay,
   Search, Bell, Moon, Sun, LifeBuoy, Download, Plus,
-  Megaphone, Image, Radar,
+  Megaphone, Image, Radar, Grid3x3,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,7 @@ const ReportsTab      = dynamic(() => import('@/components/admin/reports-tab'), 
 const ProofOfPlayTab  = dynamic(() => import('@/components/admin/proof-of-play-tab'), { ssr: false });
 const ContentTab      = dynamic(() => import('@/components/admin/content-tab'),       { ssr: false });
 const ProgrammingTab  = dynamic(() => import('@/components/admin/programming-tab'),  { ssr: false });
+const SlotsTab        = dynamic(() => import('@/components/admin/slots-tab'),        { ssr: false });
 const CompositionsTab = dynamic(() => import('@/components/admin/compositions-tab'), { ssr: false });
 const LayoutsTab      = dynamic(() => import('@/components/admin/layouts-tab'),       { ssr: false });
 const MonitoringTab   = dynamic(() => import('@/components/admin/monitoring-tab'),   { ssr: false });
@@ -63,6 +64,7 @@ type Campaign = {
 
 // ─── Nav config ──────────────────────────────────────────────────────────────
 
+type Tab = 'overview' | 'flyers' | 'stores' | 'campaigns' | 'slots' | 'payments' | 'coupons' | 'screens' | 'content' | 'programming' | 'compositions' | 'layouts' | 'reports' | 'monitoring' | 'footfall' | 'alerts' | 'media' | 'roadmap' | 'products';
 type Tab = 'overview' | 'flyers' | 'stores' | 'campaigns' | 'payments' | 'coupons' | 'screens' | 'content' | 'programming' | 'compositions' | 'layouts' | 'reports' | 'pop' | 'monitoring' | 'footfall' | 'alerts' | 'media' | 'roadmap' | 'products';
 type DeviceRow = { id: string; storeName: string; status: string; lastSeen?: string | null; locality?: string | null };
 
@@ -90,6 +92,7 @@ const NAV: { group: string; items: { id: Tab; label: string; icon: React.Element
       { id: 'screens',    label: 'Screens',     icon: Tv2         },
       { id: 'content',    label: 'Content',     icon: ImageIcon   },
       { id: 'programming',  label: 'Programming',  icon: LayoutGrid    },
+      { id: 'slots',        label: 'Slot inventory', icon: Grid3x3     },
       { id: 'compositions', label: 'Compositions', icon: CalendarClock },
       { id: 'layouts',    label: 'Layouts',     icon: Layers       },
       { id: 'reports',    label: 'Reports',     icon: FileBarChart2 },
@@ -116,6 +119,7 @@ const PAGE_META: Record<Tab, { eyebrow: string; title: string }> = {
   flyers:     { eyebrow: 'Flyer management',   title: 'Published flyers'   },
   stores:     { eyebrow: 'Store partners',     title: 'Registered stores'  },
   campaigns:  { eyebrow: 'Brand campaigns',    title: 'All campaigns'      },
+  slots:      { eyebrow: 'Slot inventory',     title: 'Loop slots by day'  },
   payments:   { eyebrow: 'Store payouts',      title: 'Partner payments'   },
   coupons:    { eyebrow: 'Brand discounts',    title: 'Coupons'            },
   screens:    { eyebrow: 'Screen fleet',       title: 'Registered screens' },
@@ -1092,6 +1096,7 @@ const NAV_DESIGN: { group: string | null; items: { id: Tab; label: string; icon:
       { id: 'stores' as Tab,     label: 'Kirana partners',  icon: Store,           count: null },
       { id: 'screens' as Tab,    label: 'Screens',          icon: Tv2,             count: null },
       { id: 'programming' as Tab, label: 'Programming',       icon: LayoutGrid,      count: null },
+      { id: 'slots' as Tab,      label: 'Slot inventory',   icon: Grid3x3,         count: null },
       { id: 'monitoring' as Tab, label: 'Monitoring',       icon: Activity,        count: null },
       { id: 'footfall' as Tab,   label: 'Footfall',         icon: Radar,           count: null },
     ],
@@ -1422,6 +1427,7 @@ function Dashboard() {
   const sectionName: Record<Tab, string> = {
     overview:   'Overview',
     campaigns:  'Campaigns',
+    slots:      'Slot inventory',
     content:    'Creatives',
     compositions: 'Compositions',
     stores:       'Kirana Partners',
@@ -1483,6 +1489,7 @@ function Dashboard() {
               {tab === 'screens'    && <ScreensTab />}
               {tab === 'content'    && <ContentTab />}
               {tab === 'programming'   && <ProgrammingTab />}
+              {tab === 'slots'      && <SlotsTab />}
               {tab === 'compositions' && <CompositionsTab />}
               {tab === 'layouts'    && <LayoutsTab />}
               {tab === 'reports'    && <ReportsTab />}

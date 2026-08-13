@@ -111,16 +111,21 @@ export async function GET(
       (s) => s.startAt.getTime() <= nowMs && s.endAt.getTime() > nowMs,
     ) ?? schedules[0];
 
-    const items = activeSchedule?.playlist.items.map((item) => ({
-      contentId:  item.content.id,
-      name:       item.content.name,
-      objectKey:  item.content.objectKey,
-      url:        publicUrl(item.content.objectKey),
-      md5:        item.content.md5,
-      type:       item.content.type,
-      durationMs: item.durationMs,
-      order:      item.order,
-    })) ?? [];
+    // Nested-playlist items (content null) are omitted from this diagnostic preview —
+    // the real plan route flattens them via resolvePlaylistTree; here only the direct
+    // media items are listed.
+    const items = activeSchedule?.playlist.items
+      .filter((item): item is typeof item & { content: NonNullable<typeof item.content> } => item.content != null)
+      .map((item) => ({
+        contentId:  item.content.id,
+        name:       item.content.name,
+        objectKey:  item.content.objectKey,
+        url:        publicUrl(item.content.objectKey),
+        md5:        item.content.md5,
+        type:       item.content.type,
+        durationMs: item.durationMs,
+        order:      item.order,
+      })) ?? [];
 
     const planHash = crypto
       .createHash('md5')

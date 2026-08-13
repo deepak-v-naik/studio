@@ -106,10 +106,14 @@ export type Content = {
 
 export type PlaylistItem = {
   id:         string;
-  contentId:  string;
+  // Exactly one of contentId / childPlaylistId is set: media item vs nested playlist
+  // (SMIL Master → Internal, plays fully per visit; max depth 3, cycles rejected).
+  contentId:       string | null;
+  childPlaylistId?: string | null;
   durationMs: number;
   order:      number;
-  content:    Content;
+  content:        Content | null;
+  childPlaylist?: { id: string; name: string } | null;
 };
 
 export type Playlist = {
@@ -361,11 +365,14 @@ export const transcodeVideo = (contentId: string) =>
 export const getPlaylists = () =>
   apiFetch<{ playlists: Playlist[] }>('/api/playlists').then((r) => r.playlists);
 
-export const createPlaylist = (body: { name: string; items?: { contentId: string; durationMs: number }[]; transition?: Playlist['transition'] }) =>
+// An item targets either content (media) or another playlist (nested — see PlaylistItem).
+export type PlaylistItemWrite = { contentId?: string; childPlaylistId?: string; durationMs: number };
+
+export const createPlaylist = (body: { name: string; items?: PlaylistItemWrite[]; transition?: Playlist['transition'] }) =>
   apiFetch<{ playlist: Playlist }>('/api/playlists', { method: 'POST', body: JSON.stringify(body) })
     .then((r) => r.playlist);
 
-export const updatePlaylist = (id: string, body: { name?: string; items?: { contentId: string; durationMs: number }[]; transition?: Playlist['transition'] }) =>
+export const updatePlaylist = (id: string, body: { name?: string; items?: PlaylistItemWrite[]; transition?: Playlist['transition'] }) =>
   apiFetch<{ playlist: Playlist }>(`/api/playlists/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
     .then((r) => r.playlist);
 
@@ -392,6 +399,65 @@ export const deleteSchedule = (id: string) =>
 
 export const forceSyncDevice = (id: string) =>
   apiFetch<{ ok: boolean; forceSyncAt: string | null }>(`/api/devices/${id}/force-sync`, { method: 'POST' });
+
+// ─── Remote commands (reboot / health ping) ────────────────────────────────────
+
+export const sendDeviceCommand = (id: string, type: 'reboot' | 'health_ping') =>
+  apiFetch<{ ok: boolean }>(`/api/devices/${id}/command`, { method: 'POST', body: JSON.stringify({ type }) });
+
+// ─── Slot-loop inventory ──────────────────────────────────────────────────────
+// Fixed loop of N 10s ad slots per store, sold by loop position + date. Availability
+// is always sold-count based — filler/bonus fill is never "sold out". See lib/slots.ts.
+
+export type SlotStore = {
+  id: string; storeName: string; city: string | null;
+  loopSlotCount: number | null; openDays: number;
+  hoursStart: string; hoursEnd: string;
+  fillerCampaignId: string | null;
+  sold: Record<string, number | null> | null; // date → sold count; null = closed that day
+};
+
+export type SlotAvailability = {
+  dates: string[];
+  defaultFillerCampaignId: string | null;
+  stores: SlotStore[];
+};
+
+export type SlotBookingRow = {
+  id: string; slotPosition: number;
+  campaignId: string; campaignName: string; hasCreative: boolean;
+};
+
+export type SlotLoopEntry = {
+  slotPosition: number; campaignId: string; contentId: string; isFiller: boolean;
+};
+
+export const getSlotAvailability = (from: string, to: string) =>
+  apiFetch<SlotAvailability>(`/api/slots/availability?from=${from}&to=${to}`);
+
+export const getSlotBookings = (storeId: string, date: string) =>
+  apiFetch<{ loopSlotCount: number; bookings: SlotBookingRow[]; playableLoop: SlotLoopEntry[] }>(
+    `/api/slots/bookings?storeId=${storeId}&date=${date}`);
+
+export const assignSlot = (body: { storeId: string; date: string; slotPosition: number; campaignId: string }) =>
+  apiFetch<{ booking: { id: string } }>('/api/slots/bookings', { method: 'POST', body: JSON.stringify(body) });
+
+export const unassignSlot = (id: string) =>
+  apiFetch<{ ok: boolean }>(`/api/slots/bookings?id=${id}`, { method: 'DELETE' });
+
+// Shrinking a loop auto-packs stranded bookings into free lower positions; `reassigned`
+// reports what moved (1-based slot numbers) so the admin isn't left guessing.
+export type SlotSettingsResult = {
+  store?: { id: string; loopSlotCount: number | null };
+  reassigned?: { date: string; from: number; to: number; campaignName: string }[];
+};
+
+export const updateSlotSettings = (body: {
+  storeId?: string; loopSlotCount?: number | null; openDays?: number;
+  hoursStart?: string; hoursEnd?: string; fillerCampaignId?: string | null;
+  defaultFillerCampaignId?: string | null;
+  campaignId?: string; slotContentId?: string | null;
+}) => apiFetch<SlotSettingsResult>('/api/slots/settings', { method: 'PATCH', body: JSON.stringify(body) });
 
 // ─── Overlays (on-screen layouts) ─────────────────────────────────────────────
 
