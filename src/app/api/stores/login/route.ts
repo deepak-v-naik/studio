@@ -10,16 +10,22 @@ function getRedis(): Redis | null {
 
 // Sliding-window rate limit: max 10 login attempts per IP per 60 seconds.
 async function checkRateLimit(ip: string): Promise<boolean> {
-  const kv = getRedis();
-  if (!kv) return true; // allow if Redis unavailable
+  // Fail open on ANY Redis problem (bad URL, outage): rate limiting is
+  // best-effort and must never take logins down with it.
+  try {
+    const kv = getRedis();
+    if (!kv) return true; // allow if Redis unavailable
 
-  const key    = `rl:login:${ip}`;
-  const limit  = 10;
-  const window = 60; // seconds
+    const key    = `rl:login:${ip}`;
+    const limit  = 10;
+    const window = 60; // seconds
 
-  const count = await kv.incr(key);
-  if (count === 1) await kv.expire(key, window);
-  return count <= limit;
+    const count = await kv.incr(key);
+    if (count === 1) await kv.expire(key, window);
+    return count <= limit;
+  } catch {
+    return true;
+  }
 }
 
 export async function POST(req: NextRequest) {

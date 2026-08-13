@@ -587,6 +587,9 @@ model PlayEvent {
   @@index([campaignId])
   @@index([tag])
   @@index([startedAt])
+  // Proof-of-Play "By Ad video" report filters/aggregates by mediaId over a date
+  // range; without this it full-scans PlayEvent (mediaId was previously unindexed).
+  @@index([mediaId, startedAt])
 }
 
 // ─── Flyers (existing — keep in Postgres now) ────────────────────────────────

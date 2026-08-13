@@ -392,21 +392,28 @@ function EmailBanner({ store, onSave }: { store: StoreInfo; onSave: (email: stri
   const [email, setEmail] = useState(store.email ?? '');
   const [busy,  setBusy]  = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState(false);
 
   if (!open) return null;
 
   const save = async () => {
     if (!email.includes('@')) return;
     setBusy(true);
+    setError(false);
     try {
-      await fetch('/api/stores/me', {
+      // storeId keeps this working when no next-auth cookie exists yet
+      // (right after registration, or an admin impersonation session).
+      const res = await fetch(`/api/stores/me?storeId=${encodeURIComponent(store.id ?? '')}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ email }),
       });
+      if (!res.ok) { setError(true); return; }
       onSave(email);
       setSaved(true);
       setTimeout(() => setOpen(false), 1500);
+    } catch {
+      setError(true);
     } finally {
       setBusy(false);
     }
@@ -438,6 +445,7 @@ function EmailBanner({ store, onSave }: { store: StoreInfo; onSave: (email: stri
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save'}
               </button>
             </div>
+            {error && <p className="text-xs text-destructive mt-2">Could not save — please try again.</p>}
           </>
         )}
       </div>
@@ -871,9 +879,10 @@ const EARNING_TABLE = [
 
 function buildTimeline(store: StoreInfo) {
   const stage = store.onboardingStage ?? 'new';
-  const isContacted = ['contacted', 'visited', 'installed', 'live', 'rejected'].includes(stage);
-  const isVisited   = ['visited', 'installed', 'live'].includes(stage);
-  const isInstalled = ['installed', 'live'].includes(stage) || (store.deviceCount ?? 0) > 0;
+  // Admin panel uses physically_onboarded/digitally_onboarded; treat them as past verification + install
+  const isContacted = ['contacted', 'visited', 'installed', 'physically_onboarded', 'digitally_onboarded', 'live', 'rejected'].includes(stage);
+  const isVisited   = ['visited', 'installed', 'physically_onboarded', 'digitally_onboarded', 'live'].includes(stage);
+  const isInstalled = ['installed', 'physically_onboarded', 'digitally_onboarded', 'live'].includes(stage) || (store.deviceCount ?? 0) > 0;
   const isLive      = stage === 'live' || !!store.liveAt;
 
   return [
@@ -896,7 +905,7 @@ function OffersAndPayoutSettings({ store, onSaved }: { store: StoreInfo; onSaved
   const save = async () => {
     setBusy(true);
     try {
-      const res = await fetch('/api/stores/me', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payout) });
+      const res = await fetch(`/api/stores/me?storeId=${encodeURIComponent(store.id ?? '')}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payout) });
       if (res.ok) onSaved(payout);
     } finally { setBusy(false); }
   };

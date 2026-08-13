@@ -374,7 +374,8 @@ function StepDetails({
   onNext: () => void;
   onBack: () => void;
 }) {
-  const valid = data.brandName && data.contactName && data.email;
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(data.email.trim());
+  const valid = data.brandName && data.contactName && emailOk;
 
   const fields = [
     { id: 'brandName',   label: 'Brand / company name', type: 'text',  ac: 'organization' },
@@ -409,6 +410,12 @@ function StepDetails({
           </motion.div>
         ))}
       </motion.div>
+
+      {data.email.trim() !== '' && !emailOk && (
+        <p className="flex items-center gap-1.5 text-xs text-destructive -mt-4">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" /> Please enter a valid email — your GST invoice goes here.
+        </p>
+      )}
 
       <motion.div
         initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
@@ -886,8 +893,8 @@ function StepPayment({
   data, onSuccess, onConfirm, onBack, isTrial,
 }: {
   data: OnboardingFormData;
-  onSuccess: (paymentId: string, orderId: string) => void;
-  onConfirm: (effectivePricePerScreen: number) => void;
+  onSuccess: (paymentId: string, orderId: string, chargedTotal: number) => void;
+  onConfirm: (effectivePricePerScreen: number, totalRupees: number) => Promise<string | null>;
   onBack: () => void;
   isTrial?: boolean;
 }) {
@@ -991,7 +998,7 @@ function StepPayment({
             }),
           });
           const result = await verify.json() as { success: boolean };
-          if (result.success) { onSuccess(response.razorpay_payment_id, response.razorpay_order_id); }
+          if (result.success) { onSuccess(response.razorpay_payment_id, response.razorpay_order_id, total); }
           else { setError('Payment verification failed. Please contact hello@wearealive.in.'); setLoading(false); }
         },
         prefill: { name: data.contactName, email: data.email, contact: data.phone },
@@ -1158,7 +1165,11 @@ function StepPayment({
           /* TRIAL MODE — skip payment */
           <button
             type="button"
-            onClick={() => onConfirm(0)}
+            onClick={async () => {
+              setLoading(true); setError(null);
+              const err = await onConfirm(0, 0);
+              if (err) { setError(err); setLoading(false); }
+            }}
             disabled={loading}
             className="relative w-full overflow-hidden rounded-xl bg-green-700 px-6 py-4 font-bold text-white transition-all hover:bg-green-800 disabled:opacity-60 active:scale-[0.99]"
           >
@@ -1201,8 +1212,13 @@ function StepPayment({
             {/* SECONDARY — confirm booking, pay later */}
             <button
               type="button"
-              onClick={() => onConfirm(pricePerScreen)}
-              className="relative w-full overflow-hidden rounded-xl border border-border bg-card px-6 py-3.5 font-bold text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground active:scale-[0.99]"
+              disabled={loading}
+              onClick={async () => {
+                setLoading(true); setError(null);
+                const err = await onConfirm(pricePerScreen, total);
+                if (err) { setError(err); setLoading(false); }
+              }}
+              className="relative w-full overflow-hidden rounded-xl border border-border bg-card px-6 py-3.5 font-bold text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground disabled:opacity-60 active:scale-[0.99]"
             >
               <span className="relative flex items-center justify-center gap-2.5 text-sm">
                 <CheckCircle2 className="h-4 w-4" /> Confirm Booking — Pay later
@@ -1334,21 +1350,18 @@ function CreativeUploadBox({ paid, paymentId, brandName }: { paid: boolean; paym
   );
 }
 
-function StepDone({ data, paymentId }: { data: OnboardingFormData; paymentId: string }) {
-  const paid    = !!paymentId;
-  const subtotal = getScreenPrice(data.screens) * data.screens * data.months;
-  const total    = subtotal + Math.round(subtotal * 0.18);
-
-  useEffect(() => {
-    const t = setTimeout(() => { window.location.href = '/dashboard'; }, 5000);
-    return () => clearTimeout(t);
-  }, []);
+function StepDone({ data, paymentId, chargedTotal, isTrial }: {
+  data: OnboardingFormData; paymentId: string; chargedTotal: number; isTrial?: boolean;
+}) {
+  const paid  = !!paymentId;
+  // The amount actually charged (incl. any promo discount + GST) — never recomputed here.
+  const total = chargedTotal;
 
   const checklist = [
-    { label: paid ? 'Payment confirmed' : 'Booking confirmed', value: paid ? paymentId.slice(0, 16) + '…' : 'Pending payment', done: paid },
+    { label: paid ? 'Payment confirmed' : isTrial ? 'Free trial claimed' : 'Booking confirmed', value: paid ? paymentId.slice(0, 16) + '…' : isTrial ? '₹0 — no payment due' : 'Pending payment', done: paid || !!isTrial },
     { label: 'Screens booked',   value: `${data.screens} screen${data.screens > 1 ? 's' : ''}`, done: true  },
     { label: 'Duration',         value: `${data.months} month${data.months > 1 ? 's' : ''}`,    done: true  },
-    { label: paid ? 'Payment' : 'Payment due', value: paid ? 'Paid' : '24 hrs before go-live · via dashboard', done: paid },
+    { label: paid ? 'Payment' : isTrial ? 'Payment' : 'Payment due', value: paid ? 'Paid' : isTrial ? 'Free trial — ₹0' : '24 hrs before go-live · via dashboard', done: paid || !!isTrial },
     { label: 'Creatives',        value: 'Email to your AM',                                      done: false },
     { label: 'Campaign goes live', value: data.startDate ? format(new Date(data.startDate + 'T00:00:00'), 'd MMM') : 'Per schedule', done: false },
   ];
@@ -1373,12 +1386,14 @@ function StepDone({ data, paymentId }: { data: OnboardingFormData; paymentId: st
 
       <motion.div variants={fadeUp} className="space-y-3">
         <h2 className="text-3xl font-black tracking-tight text-foreground">
-          {paid ? 'Campaign confirmed.' : 'Booking confirmed.'}
+          {paid ? 'Campaign confirmed.' : isTrial ? 'Free trial confirmed.' : 'Booking confirmed.'}
         </h2>
         <p className="max-w-md mx-auto text-muted-foreground leading-relaxed">
           Welcome to Alive, <strong className="text-foreground">{data.brandName}</strong>.{' '}
           {paid
             ? <>Your payment of <strong className="text-foreground">{fmt(total)}</strong> is confirmed. A GST invoice will be sent to <strong className="text-foreground">{data.email}</strong> within 2 business days.</>
+            : isTrial
+            ? <>Your free trial campaign is booked — <strong className="text-foreground">nothing to pay</strong>. Our team will reach out to schedule your creative before your campaign goes live on <strong className="text-foreground">{data.startDate ? format(new Date(data.startDate + 'T00:00:00'), 'd MMMM yyyy') : 'your selected date'}</strong>.</>
             : <>Your campaign is booked. Complete payment through your dashboard at least <strong className="text-foreground">24 hours before your campaign goes live</strong> on <strong className="text-foreground">{data.startDate ? format(new Date(data.startDate + 'T00:00:00'), 'd MMMM yyyy') : 'your selected date'}</strong>.</>
           }
         </p>
@@ -1410,15 +1425,16 @@ function StepDone({ data, paymentId }: { data: OnboardingFormData; paymentId: st
         ))}
       </motion.div>
 
-      {/* Dashboard redirect */}
+      {/* Dashboard link — no auto-redirect: it would interrupt creative upload
+          and bounce not-yet-registered brands to the login page. */}
       <motion.div variants={fadeUp} className="w-full max-w-md rounded-xl border border-primary/20 bg-primary/5 p-6 space-y-3 text-center">
-        <p className="text-xs font-bold uppercase tracking-widest text-primary">Taking you to your dashboard…</p>
-        <p className="text-sm text-muted-foreground">You&apos;ll be redirected in a moment to track your campaign live.</p>
+        <p className="text-xs font-bold uppercase tracking-widest text-primary">Track your campaign</p>
+        <p className="text-sm text-muted-foreground">Sign in with <strong className="text-foreground">{data.email}</strong> anytime to track your campaign live.</p>
         <a
           href="/dashboard"
           className="flex items-center justify-center gap-2 w-full rounded-xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-colors"
         >
-          Go to dashboard now →
+          Go to dashboard →
         </a>
       </motion.div>
 
@@ -1451,6 +1467,7 @@ function BrandOnboardingInner() {
   const [form,      setForm]      = useState<OnboardingFormData>(INITIAL);
   const [paymentId, setPaymentId] = useState('');
   const [orderId,   setOrderId]   = useState('');
+  const [chargedTotal, setChargedTotal] = useState(0);
   const { data: session, status } = useSession();
   const isLoaded    = status !== 'loading';
   const isSignedIn  = status === 'authenticated';
@@ -1484,40 +1501,54 @@ function BrandOnboardingInner() {
 
   const showIndicator = step >= 2 && step <= 5;
 
-  const saveCampaign = (pid: string, oid: string, effectivePricePerScreen: number, status: 'upcoming' | 'pending_payment') => {
-    const subtotal    = effectivePricePerScreen * form.screens * form.months;
-    const totalAmount = subtotal + Math.round(subtotal * 0.18);
-    fetch('/api/campaigns/save', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        brandName:      form.brandName,
-        contactName:    form.contactName,
-        email:          form.email,
-        phone:          form.phone,
-        gstin:          form.gstin,
-        screens:        form.screens,
-        months:         form.months,
-        startDate:      form.startDate,
-        pricePerScreen: effectivePricePerScreen,
-        totalAmount,
-        paymentId:      pid,
-        orderId:        oid,
-        status,
-      }),
-    }).catch(() => {});
-    try { localStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
+  // Returns null on success, or a user-facing error message on failure —
+  // the payment step shows it instead of silently advancing to "confirmed".
+  const saveCampaign = async (
+    pid: string, oid: string, effectivePricePerScreen: number,
+    status: 'upcoming' | 'pending_payment', totalAmount: number,
+  ): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/campaigns/save', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brandName:      form.brandName,
+          contactName:    form.contactName,
+          email:          form.email,
+          phone:          form.phone,
+          gstin:          form.gstin,
+          screens:        form.screens,
+          months:         form.months,
+          startDate:      form.startDate,
+          pricePerScreen: effectivePricePerScreen,
+          totalAmount,
+          paymentId:      pid,
+          orderId:        oid,
+          status,
+        }),
+      });
+      const body = await res.json().catch(() => null) as { data?: { error?: string } } | null;
+      if (!res.ok) return body?.data?.error ?? 'Could not save your booking. Please try again.';
+      try { localStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
+      return null;
+    } catch {
+      return 'Could not reach the server. Please check your connection and try again.';
+    }
   };
 
-  const handleConfirmBooking = (effectivePricePerScreen: number) => {
-    saveCampaign('', '', effectivePricePerScreen, 'pending_payment');
+  const handleConfirmBooking = async (effectivePricePerScreen: number, totalRupees: number): Promise<string | null> => {
+    const err = await saveCampaign('', '', effectivePricePerScreen, 'pending_payment', totalRupees);
+    if (err) return err;
     setPaymentId('');
+    setChargedTotal(totalRupees);
     next();
+    return null;
   };
 
-  const handlePaymentSuccess = async (pid: string, oid: string) => {
+  const handlePaymentSuccess = (pid: string, oid: string, total: number) => {
     setPaymentId(pid);
     setOrderId(oid);
+    setChargedTotal(total);
     // Campaign already saved as 'active' by verify-payment — no duplicate save needed
     try { localStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
     next();
@@ -1573,7 +1604,7 @@ function BrandOnboardingInner() {
               {step === 5 && (
                 <StepPayment data={form} onSuccess={handlePaymentSuccess} onConfirm={handleConfirmBooking} onBack={back} isTrial={isTrial} />
               )}
-              {step === 6 && <StepDone data={form} paymentId={paymentId} />}
+              {step === 6 && <StepDone data={form} paymentId={paymentId} chargedTotal={chargedTotal} isTrial={isTrial} />}
             </motion.div>
           </AnimatePresence>
         )}

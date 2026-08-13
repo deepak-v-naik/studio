@@ -15,8 +15,9 @@ type Stage = 'new' | 'contacted' | 'visited' | 'installed' | 'live' | string;
 function buildTimeline(store: StoreSession) {
   const stage: Stage = store.onboardingStage ?? 'new';
   const isLive = stage === 'live' || !!store.liveAt;
-  const isInstalled = ['installed', 'live'].includes(stage) || (store.deviceCount ?? 0) > 0;
-  const isContacted = ['contacted', 'visited', 'installed', 'live'].includes(stage);
+  // Admin panel uses physically_onboarded/digitally_onboarded; treat them as past verification + install
+  const isInstalled = ['installed', 'physically_onboarded', 'digitally_onboarded', 'live'].includes(stage) || (store.deviceCount ?? 0) > 0;
+  const isContacted = ['contacted', 'visited', 'installed', 'physically_onboarded', 'digitally_onboarded', 'live', 'rejected'].includes(stage);
   return [
     { label: 'Registration received', desc: 'Your details are saved successfully.', done: true, active: false },
     { label: 'Team verification', desc: 'Our team will call you within 24 hours.', done: isContacted, active: !isContacted },

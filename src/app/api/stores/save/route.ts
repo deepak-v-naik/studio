@@ -95,12 +95,18 @@ export async function GET(req: NextRequest) {
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 
 async function checkRegistrationRateLimit(ip: string): Promise<boolean> {
-  const kv = getRedis();
-  if (!kv) return true;
-  const key   = `rl:register:${ip}`;
-  const count = await kv.incr(key);
-  if (count === 1) await kv.expire(key, 3600); // 1 attempt per IP per hour
-  return count <= 3;
+  // Fail open on ANY Redis problem (bad URL, outage): rate limiting is
+  // best-effort and must never take registration down with it.
+  try {
+    const kv = getRedis();
+    if (!kv) return true;
+    const key   = `rl:register:${ip}`;
+    const count = await kv.incr(key);
+    if (count === 1) await kv.expire(key, 3600); // 1 attempt per IP per hour
+    return count <= 3;
+  } catch {
+    return true;
+  }
 }
 
 // ─── POST — register a new store partner ─────────────────────────────────────

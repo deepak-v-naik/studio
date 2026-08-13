@@ -275,6 +275,61 @@ export async function downloadEventsCsv(params?: Record<string, string>, filenam
   URL.revokeObjectURL(url);
 }
 
+// ─── Proof-of-Play reports (By Screen / By Ad / By Groups) ─────────────────────
+
+export type PlayRow = {
+  id:          string;
+  deviceId:    string;
+  screenName:  string;
+  groupName:   string | null;
+  mediaId:     string;
+  contentName: string | null;
+  contentType: 'image' | 'video' | null;
+  startedAt:   string;
+  endedAt:     string;
+  durationMs:  number;
+};
+
+export type PlaysSummary = {
+  totalPlays:   number;
+  totalMs:      number;
+  screens:      number;
+  contentCount: number;
+  byScreen:  { deviceId: string; screenName: string; groupName: string | null; plays: number; totalMs: number; lastPlayedAt: string }[];
+  byContent: { mediaId: string; contentName: string; contentType: string | null; plays: number; totalMs: number; screens: number; lastPlayedAt: string }[];
+  byGroup:   { groupName: string; plays: number; totalMs: number; screens: number }[];
+};
+
+export type PlaysResponse = {
+  matchedCount:  number;
+  rowsTruncated: boolean;
+  rows:          PlayRow[];
+  nextCursor:    string | null;
+  summary:       PlaysSummary;
+};
+
+// Filters: from, to (ISO, UTC), deviceId, mediaId, groupNames (comma-separated), limit, cursor.
+export const getPlays = (params?: Record<string, string>) => {
+  const qs = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
+  return apiFetch<PlaysResponse>(`/api/reports/plays${qs}`);
+};
+
+// CSV export of the full matching set (auth is header-only, so fetch → blob, same as downloadEventsCsv).
+export async function downloadPlaysCsv(params?: Record<string, string>, filename = 'alive-proof-of-play.csv'): Promise<void> {
+  const qs  = '?' + new URLSearchParams({ ...(params ?? {}), format: 'csv' }).toString();
+  const res = await fetch(`/api/reports/plays${qs}`, { headers: adminHeaders(), credentials: 'same-origin' });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => `HTTP ${res.status}`);
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Content ─────────────────────────────────────────────────────────────────
 
 export const getContent = () =>
