@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { parseHHmm } from '@/lib/slots';
-import { applySlotMoves, planSlotCompaction, type SlotMove } from '@/lib/slots-db';
+import { applySlotMoves, planSlotCompaction, resolveFillerCampaign, type SlotMove } from '@/lib/slots-db';
 import { pushPlanUpdated } from '@/lib/fcm';
 
 /**
@@ -142,6 +142,15 @@ export async function PATCH(req: NextRequest) {
     // Audit note, after the resize is committed. The brand dashboard reads it back.
     void recordMoves(store, moves);
 
+    // A slot-mode store without a playable filler (per-store or global default with a
+    // 10s creative) has an empty loop on zero-booking days; the device then falls back
+    // to schedules, and a screen with none goes dark. Surface that at save time
+    // instead of during a fleet incident.
+    let warning: string | undefined;
+    if (store.loopSlotCount != null && !(await resolveFillerCampaign(store.fillerCampaignId))) {
+      warning = 'No playable filler campaign is set for this store (and no global default with a 10s slot creative). On days with zero bookings the screen falls back to its schedules — if it has none, it goes dark.';
+    }
+
     db.device.findMany({ where: { storeId: store.id }, select: { id: true } })
       .then((devices) => pushPlanUpdated(devices.map((d) => d.id)))
       .catch(() => {});
@@ -152,6 +161,7 @@ export async function PATCH(req: NextRequest) {
       reassigned: moves.map((m) => ({
         date: m.date, from: m.from + 1, to: m.to + 1, campaignName: m.campaignName,
       })),
+      ...(warning ? { warning } : {}),
     });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

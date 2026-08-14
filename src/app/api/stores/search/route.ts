@@ -1,5 +1,5 @@
 // GET /api/stores/search?q=&city= — lightweight store autocomplete for admin tools
-// Returns id, storeName, city, locality, screen count (devices linked).
+// Returns id, storeName, city, locality, loopSlotCount (slot mode), screen count (devices linked).
 // Auth: admin-password header
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -30,11 +30,12 @@ export async function GET(req: NextRequest) {
         } : {}),
       },
       select: {
-        id:        true,
-        storeName: true,
-        city:      true,
-        locality:  true,
-        _count:    { select: { devices: true } },
+        id:            true,
+        storeName:     true,
+        city:          true,
+        locality:      true,
+        loopSlotCount: true,
+        _count:        { select: { devices: true } },
       },
       orderBy: [{ city: 'asc' }, { storeName: 'asc' }],
       take:    50,
@@ -50,11 +51,12 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       stores: stores.map((s) => ({
-        id:           s.id,
-        storeName:    s.storeName,
-        city:         s.city,
-        locality:     s.locality,
-        screenCount:  s._count.devices,
+        id:            s.id,
+        storeName:     s.storeName,
+        city:          s.city,
+        locality:      s.locality,
+        loopSlotCount: s.loopSlotCount,
+        screenCount:   s._count.devices,
       })),
       cities: cities.map((c) => c.city).filter(Boolean),
     });

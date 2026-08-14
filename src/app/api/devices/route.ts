@@ -76,11 +76,12 @@ export async function GET(req: NextRequest) {
         uptimePctD30: true,
         store: {
           select: {
-            storeName: true,
-            lat:       true,
-            lng:       true,
-            city:      true,
-            locality:  true,
+            storeName:     true,
+            lat:           true,
+            lng:           true,
+            city:          true,
+            locality:      true,
+            loopSlotCount: true,
           },
         },
       },
@@ -165,6 +166,7 @@ export async function GET(req: NextRequest) {
         lng:         d.store?.lng ?? null,
         city:        d.store?.city ?? null,
         locality:    d.store?.locality ?? null,
+        slotMode:    d.store?.loopSlotCount != null,
         currentSchedule: sched ? {
           id:           sched.id,
           name:         sched.name,

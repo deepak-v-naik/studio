@@ -261,10 +261,14 @@ export async function GET(req: NextRequest) {
           }];
         }
       }
-      // Closed day or nothing playable: empty items/timeline — the player falls back
-      // to the fallback playlist / waiting screen, same as a schedule gap.
-    } else {
-      // ── Schedule mode (existing behaviour) ─────────────────────────────────────
+    }
+    // A slot-mode day can resolve to nothing playable: store closed, or zero
+    // bookings with usable creatives AND no filler campaign. The spec promises
+    // playback never goes dark, and serving an empty plan here has blanked a real
+    // screen for a whole day — so fall back to the store's schedules instead of
+    // idling. Slot loop with items always wins; schedules are the safety net.
+    if (!slotMode || items.length === 0) {
+      // ── Schedule mode (and the fallback when the slot loop is empty) ───────────
       // Find all schedules active in the next 72-hr window for this device, group, store, or city.
       const scheduleOrConditions = [
         { deviceIds: { has: device.id } },

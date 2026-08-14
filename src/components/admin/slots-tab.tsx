@@ -327,6 +327,11 @@ function StoreSlotSettings({ store, campaigns, defaultFiller, onClose, onSaved }
   const [filler,   setFiller]   = useState(store.fillerCampaignId ?? '');
   const [saving,   setSaving]   = useState(false);
 
+  // Mirrors resolveFillerCampaign on the server: per-store override, else global
+  // default, and the campaign must have a 10s slot creative to actually play.
+  const effectiveFillerId = filler || defaultFiller || '';
+  const fillerPlayable    = !!campaigns.find((c) => c.id === effectiveFillerId)?.slotContentId;
+
   const save = async () => {
     setSaving(true);
     try {
@@ -343,6 +348,9 @@ function StoreSlotSettings({ store, campaigns, defaultFiller, onClose, onSaved }
             description: `${[...new Set(moved.map((m) => m.campaignName))].join(', ')} kept their plays at lower slot numbers. Shown on their dashboards; no email sent.`,
           }
         : { title: 'Slot settings saved ✓' });
+      if (res.warning) {
+        toast({ variant: 'destructive', title: 'No filler campaign — screen can go dark', description: res.warning });
+      }
       onSaved();
     } catch (e) {
       toast({ variant: 'destructive', title: 'Save failed', description: (e as Error).message });
@@ -412,9 +420,21 @@ function StoreSlotSettings({ store, campaigns, defaultFiller, onClose, onSaved }
                 <select value={filler} onChange={(e) => setFiller(e.target.value)}
                   className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary">
                   <option value="">Use default house ads{defaultFiller ? '' : ' (none set)'}</option>
-                  {campaigns.map((c) => <option key={c.id} value={c.id}>{c.brandName}</option>)}
+                  {campaigns.map((c) => <option key={c.id} value={c.id}>{c.brandName}{c.slotContentId ? '' : ' (no creative)'}</option>)}
                 </select>
                 <p className="mt-1 text-[10px] text-muted-foreground">Plays only when nothing is sold for the day.</p>
+                {enabled && !fillerPlayable && (
+                  <div className="mt-1.5 flex gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/8 px-2.5 py-2">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600 mt-px" />
+                    <p className="text-[10px] text-amber-700 leading-snug">
+                      {effectiveFillerId
+                        ? 'The chosen filler campaign has no 10s slot creative, so it cannot play. '
+                        : 'No filler campaign is set and there is no global default. '}
+                      On a day with <strong>zero bookings</strong> this screen falls back to its schedules —
+                      with no schedules it goes dark. Pick a filler campaign with a slot creative.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

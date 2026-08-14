@@ -5,7 +5,9 @@
 //   Filler/bonus fill state must never surface as "sold out" to brands.
 // - Playback never has dark slots: zero sales → whole loop plays the filler (house
 //   ads) campaign; otherwise empty positions are round-robined across the sold
-//   campaigns as bonus plays (isFiller=true, attributed to the campaign).
+//   campaigns as bonus plays (isFiller=true, attributed to the campaign). If neither
+//   sold creatives nor a filler exist the loop is empty, and /api/device/plan falls
+//   back to schedule mode rather than serving an empty (dark) plan.
 // - All dates are IST calendar dates; a store's open days are a Mon..Sun bitmask.
 
 export const SLOT_DURATION_MS = 10_000;

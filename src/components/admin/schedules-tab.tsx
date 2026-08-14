@@ -124,10 +124,20 @@ function TargetingPreview({
   }
   if (targetMode === 'device') {
     if (!selectedDevices.length) return null;
+    const slotSelected = devices.filter((d) => selectedDevices.includes(d.id) && d.slotMode);
     return (
-      <p className="text-[11px] text-green-700 bg-green-500/8 border border-green-500/20 rounded-xl px-3 py-2">
-        Will affect <strong>{selectedDevices.length} screen{selectedDevices.length !== 1 ? 's' : ''}</strong> directly.
-      </p>
+      <div className="space-y-1.5">
+        <p className="text-[11px] text-green-700 bg-green-500/8 border border-green-500/20 rounded-xl px-3 py-2">
+          Will affect <strong>{selectedDevices.length} screen{selectedDevices.length !== 1 ? 's' : ''}</strong> directly.
+        </p>
+        {slotSelected.length > 0 && (
+          <p className="text-[11px] text-amber-700 bg-amber-500/8 border border-amber-500/20 rounded-xl px-3 py-2">
+            <strong>{slotSelected.length} of the selected screen{selectedDevices.length !== 1 ? 's' : ''} {slotSelected.length === 1 ? 'is' : 'are'} in slot mode</strong> — slot-mode
+            screens play their store&apos;s fixed ad-slot loop and ignore schedules. This schedule will only
+            play there on a day whose slot loop has nothing to show.
+          </p>
+        )}
+      </div>
     );
   }
   if (targetMode === 'group') {
@@ -144,10 +154,20 @@ function TargetingPreview({
   if (targetMode === 'store') {
     if (!storeIds.length) return null;
     const total = selectedStores.reduce((s, x) => s + x.screenCount, 0);
+    const slotStores = selectedStores.filter((s) => s.loopSlotCount != null);
     return (
-      <p className="text-[11px] text-green-700 bg-green-500/8 border border-green-500/20 rounded-xl px-3 py-2">
-        Will affect <strong>~{total} screen{total !== 1 ? 's' : ''}</strong> across {storeIds.length} store{storeIds.length !== 1 ? 's' : ''}.
-      </p>
+      <div className="space-y-1.5">
+        <p className="text-[11px] text-green-700 bg-green-500/8 border border-green-500/20 rounded-xl px-3 py-2">
+          Will affect <strong>~{total} screen{total !== 1 ? 's' : ''}</strong> across {storeIds.length} store{storeIds.length !== 1 ? 's' : ''}.
+        </p>
+        {slotStores.length > 0 && (
+          <p className="text-[11px] text-amber-700 bg-amber-500/8 border border-amber-500/20 rounded-xl px-3 py-2">
+            <strong>{slotStores.map((s) => s.storeName).join(', ')} {slotStores.length === 1 ? 'is' : 'are'} in slot mode</strong> — screens
+            there play the fixed ad-slot loop and ignore schedules. This schedule will only play
+            there on a day whose slot loop has nothing to show.
+          </p>
+        )}
+      </div>
     );
   }
   if (targetMode === 'city') {
@@ -670,6 +690,12 @@ export default function SchedulesTab() {
                                 }`} />
                                 <span className="text-[10px] text-muted-foreground capitalize">{d.status.toLowerCase()}</span>
                                 {d.locality && <span className="text-[10px] text-muted-foreground/50">{d.locality}</span>}
+                                {d.slotMode && (
+                                  <span title="Slot mode — this screen ignores schedules"
+                                    className="text-[9px] font-bold text-amber-700 bg-amber-500/10 rounded-full px-1.5 py-px">
+                                    SLOT MODE
+                                  </span>
+                                )}
                               </div>
                             </div>
                             <div className={`h-4 w-4 rounded border-2 shrink-0 flex items-center justify-center ${
@@ -770,6 +796,9 @@ export default function SchedulesTab() {
                               <p className="text-[10px] text-muted-foreground">
                                 {[s.locality, s.city].filter(Boolean).join(', ')}
                                 {' · '}{s.screenCount} screen{s.screenCount !== 1 ? 's' : ''}
+                                {s.loopSlotCount != null && (
+                                  <span title="Slot mode — screens here ignore schedules" className="font-semibold text-amber-700"> · slot mode</span>
+                                )}
                               </p>
                             </div>
                             <div className={`h-4 w-4 rounded border-2 shrink-0 flex items-center justify-center ${

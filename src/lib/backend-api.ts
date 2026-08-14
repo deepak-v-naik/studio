@@ -29,6 +29,7 @@ export type Device = {
   lng?:             number | null;
   city?:            string | null;
   locality?:        string | null;
+  slotMode?:        boolean;   // store sells fixed ad slots — schedules only play as fallback
   currentSchedule?: {
     id:           string;
     name:         string;
@@ -67,11 +68,12 @@ export type DeviceGroup = {
 };
 
 export type StoreSearchResult = {
-  id:          string;
-  storeName:   string;
-  city:        string | null;
-  locality:    string | null;
-  screenCount: number;
+  id:             string;
+  storeName:      string;
+  city:           string | null;
+  locality:       string | null;
+  screenCount:    number;
+  loopSlotCount?: number | null;   // non-null = slot mode; its screens ignore schedules
 };
 
 export type PlayEvent = {
@@ -450,6 +452,7 @@ export const unassignSlot = (id: string) =>
 export type SlotSettingsResult = {
   store?: { id: string; loopSlotCount: number | null };
   reassigned?: { date: string; from: number; to: number; campaignName: string }[];
+  warning?: string;   // slot mode saved without a playable filler campaign
 };
 
 export const updateSlotSettings = (body: {

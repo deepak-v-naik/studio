@@ -1104,7 +1104,11 @@ export default function ScreensTab() {
                             <StatusIcon className="h-2 w-2" />{d.status}
                           </Badge>
                         </td>
-                        <td className="px-3 py-2 text-muted-foreground max-w-[120px] truncate">{d.currentSchedule?.name ?? '—'}</td>
+                        <td className="px-3 py-2 text-muted-foreground max-w-[120px] truncate">
+                          {d.slotMode
+                            ? <span className="font-semibold text-primary" title="Slot mode — schedules are ignored while the slot loop plays">Slot loop</span>
+                            : d.currentSchedule?.name ?? '—'}
+                        </td>
                         <td className="px-3 py-2 text-muted-foreground">{d.lastSeen ? timeSince(d.lastSeen) : 'Never'}</td>
                         <td className="px-3 py-2 text-right">
                           <button onClick={() => setDiagId(d.id)} className="rounded-lg border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
@@ -1145,6 +1149,12 @@ export default function ScreensTab() {
                               </button>
                             )}
                             {d.groupName && <span className="text-[10px] rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{d.groupName}</span>}
+                            {d.slotMode && (
+                              <span title="This store sells fixed ad slots — the screen plays the slot loop and ignores schedules (they only play if a day's loop is empty)"
+                                className="text-[10px] rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary">
+                                Slot loop
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1178,7 +1188,9 @@ export default function ScreensTab() {
                     <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-border/60">
                       <div className="px-4 py-2.5">
                         <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1 flex items-center gap-1"><CalendarDays className="h-2.5 w-2.5" />Schedule</p>
-                        {sched ? (<><p className="text-[11px] font-semibold text-foreground truncate">{sched.name}</p>{sched.playlistName && <p className="text-[10px] text-muted-foreground truncate">{sched.playlistName}</p>}</>) : <p className="text-[11px] text-muted-foreground/50 italic">No active schedule</p>}
+                        {d.slotMode ? (
+                          <><p className="text-[11px] font-semibold text-primary truncate">Slot loop</p><p className="text-[10px] text-muted-foreground truncate">Schedules ignored while slots play</p></>
+                        ) : sched ? (<><p className="text-[11px] font-semibold text-foreground truncate">{sched.name}</p>{sched.playlistName && <p className="text-[10px] text-muted-foreground truncate">{sched.playlistName}</p>}</>) : <p className="text-[11px] text-muted-foreground/50 italic">No active schedule</p>}
                       </div>
                       <div className="px-4 py-2.5">
                         <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1 flex items-center gap-1"><Clock className="h-2.5 w-2.5" />Ends at</p>
