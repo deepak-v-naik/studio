@@ -73,7 +73,10 @@ export async function GET(req: NextRequest) {
 
     const device = await db.device.findUnique({ where: { id: deviceId }, select: { id: true, jwtSecret: true } });
     if (!device) {
-      return NextResponse.json({ error: 'Device not found' }, { status: 404 });
+      // 410, matching /api/device/plan and /api/device/events: a well-formed token
+      // for a nonexistent device means the screen was deleted in the admin panel,
+      // and the player decommissions on this signal.
+      return NextResponse.json({ error: 'Device deleted' }, { status: 410 });
     }
 
     await jose.jwtVerify(deviceToken, new TextEncoder().encode(device.jwtSecret));

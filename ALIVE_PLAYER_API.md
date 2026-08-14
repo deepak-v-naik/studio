@@ -403,11 +403,14 @@ data class EventsBatchResponse(
 
 ### GET /api/device/update-check
 
-Returns the latest released player APK version for OTA. Configured server-side
-via env vars (`PLAYER_LATEST_VERSION_CODE`, `PLAYER_APK_URL`, `PLAYER_APK_SHA256`,
-optional `PLAYER_LATEST_VERSION_NAME`) — set these when a new build is released.
-The player is responsible for comparing `versionCode` against its own
-`BuildConfig.VERSION_CODE`.
+Returns the latest released player APK version for OTA. The server resolves the
+release in priority order: explicit env vars (`PLAYER_LATEST_VERSION_CODE`,
+`PLAYER_APK_URL`, `PLAYER_APK_SHA256`, optional `PLAYER_LATEST_VERSION_NAME`) act
+as a pin/rollback override; otherwise it reads the `latest.json` manifest the
+release workflow publishes next to the APK (URL overridable via
+`PLAYER_OTA_MANIFEST_URL`, default: the `sideload-latest` GitHub Release). So the
+OTA target updates itself on every build with no manual env edits. The player is
+responsible for comparing `versionCode` against its own `BuildConfig.VERSION_CODE`.
 
 **Request**
 
@@ -461,7 +464,8 @@ Status is managed server-side. The device does not set it directly.
 |-------------|-------------|-------|-------------------|
 | `400 Bad Request` | `{ "error": "..." }` | Missing or invalid fields in request body | Log error body; fix client request; do not retry automatically |
 | `401 Unauthorized` | `{ "error": "Unauthorized" }` | Missing, malformed, or expired token | Re-call `POST /api/device/claim` with the same `hardwareKey` to obtain a fresh token |
-| `404 Not Found` | `{ "error": "Device not found" }` | `deviceId` in token does not exist in DB | Re-claim from scratch (clear SharedPreferences, call claim again) |
+| `404 Not Found` | `{ "error": "Device not found" }` | Legacy — current endpoints answer `410` for a deleted device (see below) | Treat like `410` |
+| `410 Gone` | `{ "error": "Device deleted" }` | The token is well-formed but the device row no longer exists — the screen was **deleted in the admin panel** | **Decommission:** wipe ALL local state — cached plan, downloaded media, Room tables, SharedPreferences (device id, token, FCM token) — and return to the pairing screen. Do **not** auto-re-claim: that would silently resurrect the deleted screen with its old cached content. Returned by `plan`, `events`, and `update-check`. Check for `410` **before** the `401` re-claim handling. |
 | `429 Too Many Requests` | `{ "error": "Rate limited" }` | Too many requests in a short window | Back off for 60 seconds before retrying |
 | `500 Internal Server Error` | `{ "error": "..." }` | Server-side failure | Retry with exponential backoff: 2s → 4s → 8s → 16s (max 4 retries) |
 | `502 / 503 / 504` | — | Gateway / infrastructure issue | Same exponential backoff as 500 |
@@ -482,6 +486,24 @@ suspend fun <T> withRetry(maxAttempts: Int = 4, block: suspend () -> T): T {
     return block() // final attempt, let exception propagate
 }
 ```
+
+---
+
+## Push Commands (FCM)
+
+The server pushes data-only FCM messages so screens react in seconds instead of
+waiting for the next poll. The player uploads its FCM token to the server and
+handles these `data.type` values (`AliveMessagingService.onMessageReceived`):
+
+| `data.type` | Action |
+|---|---|
+| `plan_updated` | Kick an immediate plan fetch, bypassing the poll interval |
+| `decommission` | The screen was deleted in the admin panel: wipe cached plan/media/identity and return to pairing — same behaviour as an HTTP `410` |
+
+Push is best-effort. Screens that miss a push converge through polling (plan
+changes) or through the `410` answer on their next API call (deletion). Sent on
+direct screen deletion (`/api/devices/bulk`) and when a store is deleted with
+screens still attached.
 
 ---
 

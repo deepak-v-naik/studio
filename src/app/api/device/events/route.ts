@@ -106,7 +106,10 @@ async function authenticate(req: NextRequest) {
     const deviceId = payload?.sub as string | undefined;
     if (!deviceId) return null;
     const device = await db.device.findUnique({ where: { id: deviceId } });
-    if (!device) return null;
+    // Well-formed token, no device row → the screen was deleted in the admin panel.
+    // See /api/device/plan: the caller answers 410 so the player decommissions
+    // instead of re-claiming and resurrecting the deleted screen.
+    if (!device) return 'gone' as const;
     const result = await verifyDeviceToken(token, device.jwtSecret);
     if (!result) return null;
     return device;
@@ -125,6 +128,10 @@ export async function POST(req: NextRequest) {
   const correlationId = getOrCreateCorrelationId(req.headers.get('x-correlation-id'));
   const route = '/api/device/events';
   const device = await authenticate(req);
+  if (device === 'gone') {
+    const envelope = await respond({ error: 'Device deleted' }, { route, request: { correlationId }, outcome: 'unauthorized', policyFlags: ['device_deleted'], errorCategory: 'auth' });
+    return NextResponse.json(envelope, { status: 410 });
+  }
   if (!device) {
     const envelope = await respond({ error: 'Unauthorized' }, { route, request: { correlationId }, outcome: 'unauthorized', policyFlags: ['auth_failed'], errorCategory: 'auth' });
     return NextResponse.json(envelope, { status: 401 });

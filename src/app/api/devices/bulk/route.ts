@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { pushDecommission } from '@/lib/fcm';
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
@@ -29,7 +30,16 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'delete') {
+      // Capture FCM tokens BEFORE deleting — the rows are gone afterwards. The push
+      // tells each screen to wipe its cached plan/media and return to pairing now;
+      // screens that miss it (offline, FCM blocked) converge via the 410 the device
+      // API answers on their next call.
+      const doomed = await db.device.findMany({
+        where:  { id: { in: ids }, fcmToken: { not: null } },
+        select: { fcmToken: true },
+      });
       await db.device.deleteMany({ where: { id: { in: ids } } });
+      await pushDecommission(doomed.map((d) => d.fcmToken!));
       return NextResponse.json({ deleted: ids.length });
     }
 

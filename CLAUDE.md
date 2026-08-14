@@ -266,6 +266,7 @@ PLAYER_LATEST_VERSION_CODE      # ALIVE Player OTA — latest released versionCo
 PLAYER_LATEST_VERSION_NAME      # ALIVE Player OTA — latest released versionName (optional)
 PLAYER_APK_URL                  # ALIVE Player OTA — signed APK download URL (optional)
 PLAYER_APK_SHA256               # ALIVE Player OTA — APK checksum for verification (optional)
+PLAYER_OTA_MANIFEST_URL         # ALIVE Player OTA — latest.json manifest URL; overrides the default sideload-latest GitHub Release location. Env vars above win over the manifest (pin/rollback).
 NEXT_PUBLIC_EXPO_PREVIEW_URL    # Admin Dashboard → "Store app" QR target (EAS build link or exp:// URL, optional)
 PREMIUM_SIGNUP_KEY              # secret for the gated premium store signup link /store?premium=<key> (optional)
 PREMIUM_MONTHLY_PAISE           # premium store monthly remuneration in paise (default 100000 = ₹1000)

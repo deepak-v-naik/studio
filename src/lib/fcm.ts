@@ -69,6 +69,39 @@ export async function pushCommand(deviceIds: string[], type: DeviceCommandType):
 export const pushPlanUpdated = (deviceIds: string[]) => pushCommand(deviceIds, 'plan_updated');
 
 /**
+ * Sends a `decommission` FCM data message to the given FCM tokens. Takes raw tokens,
+ * not device IDs, because the caller (bulk delete) must capture them BEFORE the
+ * device rows are deleted — afterwards there is nothing left to look up.
+ *
+ * This is the fast path for "admin deleted a screen": the player wipes its cached
+ * plan/media and returns to pairing. The guaranteed path is the 410 the device API
+ * answers on its next call (plan/events/update-check), so offline screens converge
+ * too — this push just makes attended deletions take effect in seconds.
+ * Silently no-ops if FIREBASE_SERVICE_ACCOUNT_JSON is not set. Never throws.
+ */
+export async function pushDecommission(tokens: string[]): Promise<void> {
+  const valid = tokens.filter(Boolean);
+  if (!valid.length) return;
+  const app = await getFirebaseApp();
+  if (!app) return;
+
+  try {
+    const { getMessaging } = await import('firebase-admin/messaging');
+    const messaging = getMessaging(app);
+    const CHUNK = 500;
+    for (let i = 0; i < valid.length; i += CHUNK) {
+      await messaging.sendEachForMulticast({
+        tokens: valid.slice(i, i + CHUNK),
+        data: { type: 'decommission' },
+        android: { priority: 'high' },
+      });
+    }
+  } catch {
+    // best-effort — the 410 pull path is the guarantee
+  }
+}
+
+/**
  * Resolves device IDs affected by a schedule's targeting fields.
  * Used before calling pushPlanUpdated.
  */

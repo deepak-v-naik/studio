@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Redis } from '@upstash/redis';
+import { pushDecommission } from '@/lib/fcm';
 
 function getRedis() {
   if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return null;
@@ -72,10 +73,21 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     if (!rows.length) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     const { userId } = rows[0];
 
+    // The store's devices are about to cascade away with it — capture their FCM
+    // tokens first so we can tell those screens to decommission (wipe + re-pair)
+    // immediately, same as a direct screen delete via /api/devices/bulk. Screens
+    // that miss the push converge via the 410 the device API answers next poll.
+    const doomedDevices = await db.device.findMany({
+      where:  { storeId: id, fcmToken: { not: null } },
+      select: { fcmToken: true },
+    });
+
     // Delete store (cascades to StorePayment, StoreOffer, Bill, Device via FK)
     await db.$executeRaw`DELETE FROM "Store" WHERE "id" = ${id}`;
     // Delete the user account
     await db.$executeRaw`DELETE FROM "User" WHERE "id" = ${userId}`;
+
+    await pushDecommission(doomedDevices.map((d) => d.fcmToken!));
 
     // Remove from Redis index (non-fatal)
     try {

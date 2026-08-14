@@ -32,7 +32,12 @@ async function authenticate(req: NextRequest) {
     if (!deviceId) return null;
 
     const device = await db.device.findUnique({ where: { id: deviceId } });
-    if (!device) return null;
+    // A well-formed token whose device row no longer exists means the screen was
+    // deleted in the admin panel. Distinguished from a bad token ('gone', not null)
+    // so the caller can answer 410 and the player knows to decommission itself —
+    // wipe its cache and return to pairing — instead of re-claiming and silently
+    // resurrecting the deleted screen with its old cached content.
+    if (!device) return 'gone' as const;
 
     const { verifyDeviceToken: verify } = await import('@/lib/device-auth');
     const result = await verify(token, device.jwtSecret);
@@ -164,6 +169,7 @@ export async function GET(req: NextRequest) {
   const correlationId = getOrCreateCorrelationId(req.headers.get('x-correlation-id'));
   const route = '/api/device/plan';
   const device = await authenticate(req);
+  if (device === 'gone') return NextResponse.json({ error: 'Device deleted' }, { status: 410 });
   if (!device) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const now       = new Date();
