@@ -1249,7 +1249,7 @@ function StepPayment({
 }
 
 // ── Inline creative uploader on the confirmation page ─────────────────────
-function CreativeUploadBox({ paid, paymentId, brandName }: { paid: boolean; paymentId: string; brandName: string }) {
+function CreativeUploadBox({ paid, paymentId, brandName, isTrial }: { paid: boolean; paymentId: string; brandName: string; isTrial?: boolean }) {
   const [uploads,  setUploads]  = useState<string[]>([]);
   const [busy,     setBusy]     = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -1276,14 +1276,18 @@ function CreativeUploadBox({ paid, paymentId, brandName }: { paid: boolean; paym
   };
 
   if (!paid) {
+    // Trials never pay, so payment-gated copy would be a dead end — their
+    // creatives go through the Account Manager instead.
     return (
       <div className="rounded-xl border border-primary/30 bg-primary/5 p-6 text-left space-y-3">
         <div className="flex items-center gap-2">
           <Mail className="h-5 w-5 text-primary shrink-0" />
-          <p className="font-bold text-foreground">Send us your creatives after payment</p>
+          <p className="font-bold text-foreground">{isTrial ? 'Send us your creatives' : 'Send us your creatives after payment'}</p>
         </div>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Complete your payment to unlock creative upload. You can also email files to your Account Manager.
+          {isTrial
+            ? 'Email your ad creative and logo to your Account Manager — we’ll format and schedule them before your campaign goes live.'
+            : 'Complete your payment to unlock creative upload. You can also email files to your Account Manager.'}
         </p>
         <a href={`mailto:hello@wearealive.in?subject=Campaign%20creatives%20—%20${encodeURIComponent(brandName)}`}
           className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-bold text-foreground hover:bg-muted transition-colors">
@@ -1400,7 +1404,7 @@ function StepDone({ data, paymentId, chargedTotal, isTrial }: {
       </motion.div>
 
       <motion.div variants={fadeUp} className="w-full max-w-md">
-        <CreativeUploadBox paid={paid} paymentId={paymentId} brandName={data.brandName} />
+        <CreativeUploadBox paid={paid} paymentId={paymentId} brandName={data.brandName} isTrial={isTrial} />
       </motion.div>
 
       <motion.div variants={stagger} className="w-full max-w-md space-y-2 text-left">
