@@ -18,6 +18,15 @@ FROM public.ecr.aws/lambda/nodejs:20
 COPY package.json ${LAMBDA_TASK_ROOT}/
 RUN npm install --omit=dev --prefix ${LAMBDA_TASK_ROOT}
 
+# The @ffmpeg-installer / @ffprobe-installer binaries don't reliably carry an execute
+# bit after `npm install`, and /var/task is READ-ONLY at Lambda runtime — so the
+# installers' own require-time chmod fails and every job dies with
+# "spawn .../ffprobe EACCES" (observed in prod: all transcodes stuck at status=error,
+# no renditions ever produced). Set the bit here at build time, while the layer is
+# still writable. chmod the whole installer trees so a platform-dir change can't regress.
+RUN chmod -R +x ${LAMBDA_TASK_ROOT}/node_modules/@ffmpeg-installer \
+                ${LAMBDA_TASK_ROOT}/node_modules/@ffprobe-installer
+
 COPY index.mjs ${LAMBDA_TASK_ROOT}/
 
 CMD ["index.handler"]
