@@ -215,7 +215,7 @@ export default function DealsPage() {
       {/* Footer */}
       <footer className="border-t border-border/30 py-5 text-center">
         <p className="text-xs text-muted-foreground/40">
-          © 2025 Alive Advertising Solutions Pvt. Ltd. · hello@wearealive.in
+          © 2025 VS Collective LLP · hello@wearealive.in
         </p>
       </footer>
     </div>

@@ -67,6 +67,9 @@ function getScreenPrice(n: number): number {
 }
 
 const BASE_PRICE       = 799;
+// Self-serve ceiling — matches the server bound in create-order / campaigns-save.
+// Bigger campaigns go through sales so ops can confirm screen inventory first.
+const MAX_SCREENS      = 50;
 const playsPerScreen   = 144;
 const viewsPerScreenMo = 4320;
 
@@ -359,7 +362,7 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
           Begin onboarding <ArrowRight className="h-4 w-4" />
         </motion.button>
         <p className="text-xs text-muted-foreground/40 tracking-wide">
-          Takes less than 5 minutes · 2025 · Alive Media Pvt. Ltd.
+          Takes less than 5 minutes · 2025 · VS Collective LLP
         </p>
       </motion.div>
     </div>
@@ -446,7 +449,7 @@ function StepCampaign({
   const valid          = data.screens > 0 && data.months > 0 && data.startDate;
 
   const adjustScreens = (delta: number) => {
-    onChange('screens', Math.max(1, data.screens + delta));
+    onChange('screens', Math.min(MAX_SCREENS, Math.max(1, data.screens + delta)));
   };
 
   return (
@@ -552,18 +555,20 @@ function StepCampaign({
             <input
               type="number"
               min={1}
+              max={MAX_SCREENS}
               value={data.screens}
               onChange={(e) => {
                 const v = parseInt(e.target.value, 10);
-                if (!isNaN(v) && v >= 1) onChange('screens', v);
+                if (!isNaN(v) && v >= 1) onChange('screens', Math.min(MAX_SCREENS, v));
               }}
               className="h-9 w-16 rounded-lg border border-border bg-background text-center text-base font-black text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
             />
             <motion.button
               type="button"
               onClick={() => adjustScreens(1)}
+              disabled={data.screens >= MAX_SCREENS}
               whileTap={{ scale: 0.9 }}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-muted text-lg font-bold text-foreground transition-colors hover:border-primary/50 hover:bg-primary/10"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-muted text-lg font-bold text-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 disabled:opacity-30"
             >
               +
             </motion.button>
@@ -973,7 +978,7 @@ function StepPayment({
 
       const options = {
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-        amount: body.amount, currency: 'INR', name: 'Alive Media',
+        amount: body.amount, currency: 'INR', name: 'ALIVE',
         description: `${data.screens} screen${data.screens > 1 ? 's' : ''} · ${data.months} month${data.months > 1 ? 's' : ''}`,
         order_id: body.id,
         handler: async (response: RazorpayResponse) => {
@@ -1509,7 +1514,7 @@ function BrandOnboardingInner() {
   // the payment step shows it instead of silently advancing to "confirmed".
   const saveCampaign = async (
     pid: string, oid: string, effectivePricePerScreen: number,
-    status: 'upcoming' | 'pending_payment', totalAmount: number,
+    status: 'upcoming' | 'pending_payment' | 'trial', totalAmount: number,
   ): Promise<string | null> => {
     try {
       const res = await fetch('/api/campaigns/save', {
@@ -1541,7 +1546,7 @@ function BrandOnboardingInner() {
   };
 
   const handleConfirmBooking = async (effectivePricePerScreen: number, totalRupees: number): Promise<string | null> => {
-    const err = await saveCampaign('', '', effectivePricePerScreen, 'pending_payment', totalRupees);
+    const err = await saveCampaign('', '', effectivePricePerScreen, isTrial ? 'trial' : 'pending_payment', totalRupees);
     if (err) return err;
     setPaymentId('');
     setChargedTotal(totalRupees);
@@ -1616,7 +1621,7 @@ function BrandOnboardingInner() {
 
       <footer className="border-t border-border/30 py-5 text-center">
         <p className="text-xs text-muted-foreground/40 tracking-wide">
-          © 2025 Alive Advertising Solutions Pvt. Ltd. ·{' '}
+          © 2025 VS Collective LLP ·{' '}
           <a href="mailto:hello@wearealive.in" className="hover:text-muted-foreground transition-colors">
             hello@wearealive.in
           </a>

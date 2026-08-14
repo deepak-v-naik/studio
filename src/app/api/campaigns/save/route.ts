@@ -30,19 +30,32 @@ export async function POST(req: NextRequest) {
     // This route is unauthenticated — never let the client mint an 'active'
     // (i.e. paid-looking) campaign. Paid status is set only by verify-payment
     // after the Razorpay signature check.
-    if (body.status && !['upcoming', 'pending_payment'].includes(body.status)) {
+    if (body.status && !['upcoming', 'pending_payment', 'trial'].includes(body.status)) {
       const envelope = await respond({ error: 'Invalid campaign status.' }, { route, request: { status: body.status }, outcome: 'invalid_request', policyFlags: ['invalid_status'], errorCategory: 'validation', startedAtMs });
+      return NextResponse.json(envelope, { status: 400 });
+    }
+
+    const screens = Math.floor(Number(body.screens ?? 1));
+    const months  = Math.floor(Number(body.months  ?? 1));
+    if (!Number.isFinite(screens) || screens < 1 || screens > 50 || !Number.isFinite(months) || months < 1 || months > 12) {
+      const envelope = await respond({ error: 'Invalid booking: screens must be 1–50 and months 1–12.' }, { route, request: { screens: body.screens, months: body.months }, outcome: 'invalid_request', policyFlags: ['invalid_bounds'], errorCategory: 'validation', startedAtMs });
       return NextResponse.json(envelope, { status: 400 });
     }
 
     const email = body.email.trim().toLowerCase();
 
-    // C1: a free (₹0) campaign — the "free trial" path — is allowed only once
-    // per brand. Without this, anyone could repeatedly create ₹0 campaigns via
-    // the ?trial=1 link. Paid bookings (totalAmount > 0) are unaffected.
-    if (Number(body.totalAmount) <= 0) {
+    // A ₹0 booking IS a trial regardless of what the client claims, and a
+    // claimed trial is always ₹0 — normalising here keeps the two in lockstep
+    // so reporting can filter on status alone.
+    const isTrial = Number(body.totalAmount) <= 0 || body.status === 'trial';
+    const status  = isTrial ? 'trial' : (body.status ?? 'upcoming');
+
+    // C1: a free trial is allowed only once per brand. Without this, anyone
+    // could repeatedly create ₹0 campaigns via the ?trial=1 link. The
+    // totalAmount leg covers legacy trial rows saved as pending_payment ₹0.
+    if (isTrial) {
       const priorFreeTrials = await db.campaign.count({
-        where: { email, totalAmount: { lte: 0 } },
+        where: { email, OR: [{ status: 'trial' }, { totalAmount: { lte: 0 } }] },
       });
       if (priorFreeTrials > 0) {
         const envelope = await respond({ error: 'A free trial has already been used for this account.' }, { route, request: { email }, outcome: 'invalid_request', policyFlags: ['trial_already_used'], errorCategory: 'validation', startedAtMs });
@@ -60,14 +73,14 @@ export async function POST(req: NextRequest) {
         contactName:    body.contactName,
         email:          body.email,
         phone:          body.phone ?? undefined,
-        screens:        body.screens    ?? 1,
-        months:         body.months     ?? 1,
+        screens,
+        months,
         startDate:      new Date(body.startDate),
         pricePerScreen: body.pricePerScreen,
-        totalAmount:    body.totalAmount,
+        totalAmount:    isTrial ? 0 : body.totalAmount,
         paymentId:      body.paymentId  ?? null,
         orderId:        body.orderId    ?? null,
-        status:         body.status     ?? 'upcoming',
+        status,
       },
     });
 

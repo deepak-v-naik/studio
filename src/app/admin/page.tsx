@@ -674,7 +674,7 @@ function CampaignsPanel() {
 
   const total   = campaigns.reduce((s, c) => s + (c.totalAmount ?? 0), 0);
   const paid    = campaigns.filter((c) => c.paymentId && c.paymentId !== 'pending').length;
-  const pending = campaigns.filter((c) => !c.paymentId || c.paymentId === 'pending').length;
+  const pending = campaigns.filter((c) => (!c.paymentId || c.paymentId === 'pending') && c.status !== 'trial').length;
 
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
@@ -706,7 +706,8 @@ function CampaignsPanel() {
             </thead>
             <tbody className="divide-y divide-border">
               {campaigns.map((c) => {
-                const isPaid = c.paymentId && c.paymentId !== 'pending';
+                const isPaid  = c.paymentId && c.paymentId !== 'pending';
+                const isTrial = c.status === 'trial';
                 return (
                   <tr key={c.id} className="hover:bg-muted/20 transition-colors">
                     <td className="px-4 py-3 font-semibold text-foreground whitespace-nowrap">{c.brandName || '—'}</td>
@@ -714,9 +715,9 @@ function CampaignsPanel() {
                     <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{c.screens} × {c.months}mo</td>
                     <td className="px-4 py-3 font-semibold text-foreground whitespace-nowrap">{fmt(c.totalAmount ?? 0)}</td>
                     <td className="px-4 py-3">
-                      <Badge variant={isPaid ? 'success' : 'warning'} className="text-[10px] py-0.5 px-2 font-bold whitespace-nowrap">
+                      <Badge variant={isPaid ? 'success' : isTrial ? 'info' : 'warning'} className="text-[10px] py-0.5 px-2 font-bold whitespace-nowrap">
                         {isPaid ? <CheckCircle2 className="h-2.5 w-2.5" /> : <Clock className="h-2.5 w-2.5" />}
-                        {isPaid ? 'Paid' : 'Pay later'}
+                        {isPaid ? 'Paid' : isTrial ? 'Trial' : 'Pay later'}
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground/60 whitespace-nowrap">{fmtDate(c.createdAt)}</td>

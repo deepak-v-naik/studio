@@ -40,8 +40,8 @@ export async function POST(req: NextRequest) {
 
     const screens = Math.floor(Number(body.screens));
     const months  = Math.floor(Number(body.months));
-    if (!Number.isFinite(screens) || screens < 1 || !Number.isFinite(months) || months < 1) {
-      return NextResponse.json({ error: 'Invalid order: screens and months are required.' }, { status: 400 });
+    if (!Number.isFinite(screens) || screens < 1 || screens > 50 || !Number.isFinite(months) || months < 1 || months > 12) {
+      return NextResponse.json({ error: 'Invalid order: screens must be 1–50 and months 1–12.' }, { status: 400 });
     }
 
     // ── Recompute the authoritative amount (rupees) ────────────────────────────
