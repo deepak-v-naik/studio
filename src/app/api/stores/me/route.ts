@@ -62,6 +62,24 @@ export async function GET(req: NextRequest) {
       };
     } catch { /* column not yet migrated — safe default null */ }
 
+    // GPS-verified onboarding photos — separate query so a missing migration
+    // can't take the stage/payout fields down with it.
+    type PhotoCols = {
+      shopPhotoUrl: string | null; shopPhotoLat: number | null; shopPhotoLng: number | null;
+      shopPhotoSource: string | null; shopPhotoAt: Date | null;
+      installPhotoUrl: string | null; installPhotoLat: number | null; installPhotoLng: number | null;
+      installPhotoSource: string | null; installPhotoAt: Date | null;
+    };
+    let photos: Partial<PhotoCols> = {};
+    try {
+      const rowsP = await db.$queryRaw<PhotoCols[]>`
+        SELECT "shopPhotoUrl", "shopPhotoLat", "shopPhotoLng", "shopPhotoSource", "shopPhotoAt",
+               "installPhotoUrl", "installPhotoLat", "installPhotoLng", "installPhotoSource", "installPhotoAt"
+        FROM "Store" WHERE "id" = ${storeId} LIMIT 1
+      `;
+      photos = rowsP[0] ?? {};
+    } catch { /* columns not yet migrated — omit gracefully */ }
+
     // Count linked devices for store overview
     try {
       const storeRow = rows[0];
@@ -93,6 +111,14 @@ export async function GET(req: NextRequest) {
       tier,
       monthlyCompensationPaise,
       ...payout,
+      shopPhotoUrl:     photos.shopPhotoUrl     ?? null,
+      shopPhotoLat:     photos.shopPhotoLat     ?? null,
+      shopPhotoLng:     photos.shopPhotoLng     ?? null,
+      shopPhotoAt:      photos.shopPhotoAt instanceof Date ? photos.shopPhotoAt.toISOString() : (photos.shopPhotoAt ?? null),
+      installPhotoUrl:  photos.installPhotoUrl  ?? null,
+      installPhotoLat:  photos.installPhotoLat  ?? null,
+      installPhotoLng:  photos.installPhotoLng  ?? null,
+      installPhotoAt:   photos.installPhotoAt instanceof Date ? photos.installPhotoAt.toISOString() : (photos.installPhotoAt ?? null),
       createdAt:       s.createdAt instanceof Date ? s.createdAt.toISOString() : s.createdAt,
       // from User join
       email:        (s as unknown as { email?: string }).email ?? null,

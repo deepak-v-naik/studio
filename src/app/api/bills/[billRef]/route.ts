@@ -17,6 +17,10 @@ export async function GET(
 
   if (!bill) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const { items, ...billData } = bill;
+  // Strip storeId: billRefs are guessable (time-based), this route is public,
+  // and storeId doubles as the store partner's API bearer credential — leaking
+  // it would let anyone write to that store's KYC/payout/verification-photo
+  // endpoints.
+  const { items, storeId: _storeId, ...billData } = bill;
   return NextResponse.json({ bill: billData, items });
 }

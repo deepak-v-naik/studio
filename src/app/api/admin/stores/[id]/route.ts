@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Redis } from '@upstash/redis';
 import { pushDecommission } from '@/lib/fcm';
+import { deleteObject, publicUrl } from '@/lib/r2';
+
+/** R2 object key for a stored verification-photo URL, or null if it isn't one. */
+function verificationKeyFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const prefix = publicUrl('');
+  if (!prefix || !url.startsWith(prefix)) return null;
+  const key = url.slice(prefix.length);
+  return key.startsWith('verification/') ? key : null;
+}
 
 function getRedis() {
   if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return null;
@@ -24,6 +34,47 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       payoutStatus?: string;
       payoutNotes?: string;
     };
+
+    // ── GPS-photo gates on stage advancement ─────────────────────────────────
+    // The onboarding pipeline requires field evidence before milestones pass:
+    // a GPS-tagged shop-front photo to cross INTO 'contacted' (Team
+    // verification), and a GPS-tagged installed-TV photo to cross INTO
+    // 'physically_onboarded' or beyond (Site visit & install). Gates fire only
+    // on FORWARD crossings of those milestones — re-saving the current stage
+    // (the admin Save button always sends it), demoting, 'rejected', and
+    // stores already past a milestone (the pre-feature fleet) are unaffected.
+    const STAGE_RANK: Record<string, number> = {
+      new: 0, contacted: 1, physically_onboarded: 2, digitally_onboarded: 3, live: 4,
+    };
+    const targetRank = body.onboardingStage ? STAGE_RANK[body.onboardingStage] : undefined;
+    if (targetRank !== undefined && targetRank >= 1) {
+      try {
+        const rows = await db.$queryRaw<{ onboardingStage: string | null; shopPhotoUrl: string | null; installPhotoUrl: string | null }[]>`
+          SELECT "onboardingStage", "shopPhotoUrl", "installPhotoUrl" FROM "Store" WHERE "id" = ${id} LIMIT 1
+        `;
+        const p = rows[0];
+        const currentRank = p ? (STAGE_RANK[p.onboardingStage ?? 'new'] ?? 0) : 0;
+        if (p && currentRank < 1 && targetRank >= 1 && !p.shopPhotoUrl) {
+          return NextResponse.json(
+            { error: 'Cannot advance stage: the partner has not uploaded the GPS shop-front photo yet (required for Team verification).' },
+            { status: 409 },
+          );
+        }
+        if (p && currentRank < 2 && targetRank >= 2 && !p.installPhotoUrl) {
+          return NextResponse.json(
+            { error: 'Cannot advance stage: the GPS photo of the installed TV has not been uploaded yet (required for Site visit & install).' },
+            { status: 409 },
+          );
+        }
+      } catch (e) {
+        // Fail open ONLY for the not-yet-migrated-columns case; any other DB
+        // error must not silently disable the gate — rethrow so the save fails
+        // loudly instead of advancing ungated.
+        const msg = (e as Error).message ?? '';
+        if (!/column .* does not exist|42703/i.test(msg)) throw e;
+        console.error('photo-gate: columns missing, failing open:', msg.slice(0, 200));
+      }
+    }
 
     // Build only the columns we're allowed to update
     const setClauses: string[] = [];
@@ -82,12 +133,24 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       select: { fcmToken: true },
     });
 
+    // Capture verification-photo keys before the row vanishes so the R2
+    // objects can be removed too (tolerant of the columns not existing yet).
+    let photoKeys: string[] = [];
+    try {
+      const ph = await db.$queryRaw<{ shopPhotoUrl: string | null; installPhotoUrl: string | null }[]>`
+        SELECT "shopPhotoUrl", "installPhotoUrl" FROM "Store" WHERE "id" = ${id} LIMIT 1
+      `;
+      photoKeys = [verificationKeyFromUrl(ph[0]?.shopPhotoUrl ?? null), verificationKeyFromUrl(ph[0]?.installPhotoUrl ?? null)]
+        .filter((k): k is string => !!k);
+    } catch { /* columns not yet migrated */ }
+
     // Delete store (cascades to StorePayment, StoreOffer, Bill, Device via FK)
     await db.$executeRaw`DELETE FROM "Store" WHERE "id" = ${id}`;
     // Delete the user account
     await db.$executeRaw`DELETE FROM "User" WHERE "id" = ${userId}`;
 
     await pushDecommission(doomedDevices.map((d) => d.fcmToken!));
+    for (const key of photoKeys) await deleteObject(key).catch(() => { /* best-effort */ });
 
     // Remove from Redis index (non-fatal)
     try {

@@ -118,6 +118,24 @@ model Store {
   kycRejectedReason String? // admin's rejection note
   excludedZoneId    String? // footfall sensor zone ID to exclude from counts (staff area)
 
+  // ── GPS-verified onboarding photos ──────────────────────────────────────────
+  // Two photo gates in the onboarding pipeline, enforced by /api/admin/stores/[id]:
+  // the shop-front photo must exist before the stage can advance past 'new'
+  // (Team verification), and the installed-TV photo before it can advance past
+  // 'contacted' (Site visit & install). Coordinates come from the photo's EXIF
+  // GPS tags when present, else the device's geolocation at upload time —
+  // `source` records which ('exif' | 'device').
+  shopPhotoUrl       String?
+  shopPhotoLat       Float?
+  shopPhotoLng       Float?
+  shopPhotoSource    String?
+  shopPhotoAt        DateTime?
+  installPhotoUrl    String?
+  installPhotoLat    Float?
+  installPhotoLng    Float?
+  installPhotoSource String?
+  installPhotoAt     DateTime?
+
   // ── Slot loop (fixed-loop ad inventory) ─────────────────────────────────────
   // Inventory is sold by loop position + date, never clock time. loopSlotCount is
   // ALSO the slot-mode switch: null = store plays its normal schedules/playlists;

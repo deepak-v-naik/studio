@@ -65,10 +65,40 @@ export async function GET(req: NextRequest) {
       extraMap = new Map(extraRows.map((r) => [r.id, r]));
     } catch { /* columns not yet migrated — omit gracefully */ }
 
+    // GPS-verified onboarding photos — separate query so a missing migration
+    // can't hide the stage/payout columns above.
+    type PhotoRow = {
+      id: string;
+      shopPhotoUrl: string | null; shopPhotoLat: number | null; shopPhotoLng: number | null;
+      shopPhotoSource: string | null; shopPhotoAt: Date | null;
+      installPhotoUrl: string | null; installPhotoLat: number | null; installPhotoLng: number | null;
+      installPhotoSource: string | null; installPhotoAt: Date | null;
+    };
+    let photoMap = new Map<string, PhotoRow>();
+    try {
+      const photoRows = await db.$queryRaw<PhotoRow[]>`
+        SELECT "id", "shopPhotoUrl", "shopPhotoLat", "shopPhotoLng", "shopPhotoSource", "shopPhotoAt",
+               "installPhotoUrl", "installPhotoLat", "installPhotoLng", "installPhotoSource", "installPhotoAt"
+        FROM "Store"
+      `;
+      photoMap = new Map(photoRows.map((r) => [r.id, r]));
+    } catch { /* columns not yet migrated — omit gracefully */ }
+
     const result = stores.map((s) => {
       const ex = extraMap.get(s.id);
+      const ph = photoMap.get(s.id);
       return {
         ...s,
+        shopPhotoUrl:       ph?.shopPhotoUrl       ?? null,
+        shopPhotoLat:       ph?.shopPhotoLat       ?? null,
+        shopPhotoLng:       ph?.shopPhotoLng       ?? null,
+        shopPhotoSource:    ph?.shopPhotoSource    ?? null,
+        shopPhotoAt:        ph?.shopPhotoAt instanceof Date ? ph.shopPhotoAt.toISOString() : (ph?.shopPhotoAt ?? null),
+        installPhotoUrl:    ph?.installPhotoUrl    ?? null,
+        installPhotoLat:    ph?.installPhotoLat    ?? null,
+        installPhotoLng:    ph?.installPhotoLng    ?? null,
+        installPhotoSource: ph?.installPhotoSource ?? null,
+        installPhotoAt:     ph?.installPhotoAt instanceof Date ? ph.installPhotoAt.toISOString() : (ph?.installPhotoAt ?? null),
         createdAt:       s.createdAt instanceof Date ? s.createdAt.toISOString() : s.createdAt,
         updatedAt:       s.updatedAt instanceof Date ? s.updatedAt.toISOString() : s.updatedAt,
         agreedAt:        s.agreedAt instanceof Date  ? s.agreedAt.toISOString()  : (s.agreedAt ?? null),

@@ -11,7 +11,7 @@ import {
   // New icons for the redesign
   MonitorPlay,
   Search, Bell, Moon, Sun, LifeBuoy, Download, Plus,
-  Megaphone, Image, Radar, Grid3x3,
+  Megaphone, Image, Radar, Grid3x3, ImagePlus,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { Badge } from '@/components/ui/badge';
@@ -53,6 +53,9 @@ type StoreReg = {
   payoutLastPaidAt?: string | null; payoutNotes?: string | null;
   referralCode?: string; referredBy?: string | null; agreedAt?: string | null; liveAt?: string | null;
   deviceCount?: number;
+  // GPS-verified onboarding photos
+  shopPhotoUrl?: string | null; shopPhotoLat?: number | null; shopPhotoLng?: number | null; shopPhotoSource?: string | null; shopPhotoAt?: string | null;
+  installPhotoUrl?: string | null; installPhotoLat?: number | null; installPhotoLng?: number | null; installPhotoSource?: string | null; installPhotoAt?: string | null;
 };
 type Campaign = {
   id: string; brandId: string | null; brandName: string; contactName: string; email: string;
@@ -409,6 +412,61 @@ function PremiumLinkCard() {
   );
 }
 
+// ─── GPS verification photos (admin view) ────────────────────────────────────
+
+/** Metres between two WGS-84 points (haversine). */
+function distanceMetres(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLng = (lng2 - lng1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function AdminPhotoCard({ label, url, lat, lng, source, at, storeLat, storeLng }: {
+  label: string; url?: string | null; lat?: number | null; lng?: number | null;
+  source?: string | null; at?: string | null; storeLat?: number | null; storeLng?: number | null;
+}) {
+  if (!url) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted/20 px-3 py-2.5">
+        <ImagePlus className="h-4 w-4 text-muted-foreground/40 shrink-0" />
+        <div>
+          <p className="text-[11px] font-semibold text-foreground/70">{label}</p>
+          <p className="text-[10px] text-muted-foreground">Not uploaded yet — stage is gated on it</p>
+        </div>
+      </div>
+    );
+  }
+  const hasCoords = typeof lat === 'number' && typeof lng === 'number';
+  // Flag photos taken suspiciously far from the registered map pin (the 200 m
+  // exclusivity radius is a natural threshold for "same shop").
+  const dist = hasCoords && typeof storeLat === 'number' && typeof storeLng === 'number'
+    ? distanceMetres(lat!, lng!, storeLat, storeLng) : null;
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-border bg-background px-3 py-2.5">
+      <a href={url} target="_blank" rel="noreferrer" className="shrink-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt={label} className="h-12 w-12 rounded-md object-cover border border-border" />
+      </a>
+      <div className="min-w-0">
+        <p className="text-[11px] font-semibold text-foreground">{label}{at ? ` · ${fmtDate(at)}` : ''}{source === 'device' ? ' · device GPS' : ''}</p>
+        {hasCoords ? (
+          <a href={`https://maps.google.com/?q=${lat},${lng}`} target="_blank" rel="noreferrer"
+            className="text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2">
+            {lat!.toFixed(6)}, {lng!.toFixed(6)}
+          </a>
+        ) : <p className="text-[10px] text-muted-foreground">No coordinates</p>}
+        {dist != null && (
+          <p className={`text-[10px] font-semibold ${dist > 200 ? 'text-amber-600' : 'text-green-700'}`}>
+            {dist > 200 ? '⚠ ' : ''}{dist < 1000 ? `${Math.round(dist)} m` : `${(dist / 1000).toFixed(1)} km`} from registered pin
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StoresPanel() {
   const [stores,   setStores]   = useState<StoreReg[]>([]);
   const [loading,  setLoading]  = useState(true);
@@ -444,7 +502,13 @@ function StoresPanel() {
           payoutNotes: store.payoutNotes || null,
         }),
       });
-      if (!res.ok) throw new Error('Save failed');
+      if (!res.ok) {
+        // Surface the server's message — the photo gates answer 409 with a
+        // specific reason (missing shop/install photo) the admin needs to see.
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        alert(body?.error ?? 'Save failed');
+        return;
+      }
     } finally { setSaving(null); }
   };
 
@@ -598,6 +662,16 @@ function StoresPanel() {
                       {s.referredBy && <span><span className="font-semibold text-foreground/60">Referred by:</span> {s.referredBy}</span>}
                       {s.liveAt  && <span><span className="font-semibold text-foreground/60">Live since:</span> {fmtDate(s.liveAt)}</span>}
                       {s.agreedAt && <span><span className="font-semibold text-foreground/60">Agreed:</span> {fmtDate(s.agreedAt)}</span>}
+                    </div>
+
+                    {/* GPS verification photos — evidence behind the stage gates */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <AdminPhotoCard label="Shop front" url={s.shopPhotoUrl} lat={s.shopPhotoLat} lng={s.shopPhotoLng}
+                        source={s.shopPhotoSource} at={s.shopPhotoAt}
+                        storeLat={s.lat != null ? Number(s.lat) : null} storeLng={s.lng != null ? Number(s.lng) : null} />
+                      <AdminPhotoCard label="Installed TV" url={s.installPhotoUrl} lat={s.installPhotoLat} lng={s.installPhotoLng}
+                        source={s.installPhotoSource} at={s.installPhotoAt}
+                        storeLat={s.lat != null ? Number(s.lat) : null} storeLng={s.lng != null ? Number(s.lng) : null} />
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">

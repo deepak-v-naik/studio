@@ -81,7 +81,11 @@ export async function GET() {
     const results = await kv.mget<Flyer[]>(...keys);
     const flyers  = (results as (Flyer | null)[]).filter((f): f is Flyer => f !== null);
 
-    return NextResponse.json(flyers);
+    // Strip storeId: this endpoint is public (deals page + dashboards filter by
+    // storeName), and storeId doubles as the store partner's API bearer
+    // credential — leaking it here would let anyone write to that store's
+    // KYC/payout/verification-photo endpoints.
+    return NextResponse.json(flyers.map(({ storeId: _storeId, ...pub }) => pub));
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message ?? 'Failed to fetch flyers' }, { status: 500 });
   }

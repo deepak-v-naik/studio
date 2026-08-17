@@ -8,9 +8,10 @@ import {
   MapPin, MessageCircle, ChevronRight,
   TrendingUp, Calendar, Shield, Loader2, ArrowRight,
   Mail, AlertCircle, X, FileImage, Download, Gift, Copy, Check, ShoppingCart, Tag, ImageIcon,
-  KeyRound, Eye, EyeOff, ArrowLeft, ShieldCheck,
+  KeyRound, Eye, EyeOff, ArrowLeft, ShieldCheck, Camera,
 } from 'lucide-react';
 import { Logo } from '@/components/icons/logo';
+import { extractGpsFromFile } from '@/lib/exif-gps';
 import VoiceBillTab from '@/components/store/voice-bill-tab';
 import OffersTab from '@/components/store/offers-tab';
 import FlyerTab from '@/components/store/flyer-tab';
@@ -52,6 +53,9 @@ type StoreInfo = {
   tier?:                     string;
   monthlyCompensationPaise?: number;
   payoutMethod?: string; upiId?: string; bankAccountName?: string; bankAccountNo?: string; bankIfsc?: string; bankName?: string;
+  // GPS-verified onboarding photos (see GpsPhotoUpload)
+  shopPhotoUrl?:    string | null; shopPhotoLat?:    number | null; shopPhotoLng?:    number | null; shopPhotoAt?:    string | null;
+  installPhotoUrl?: string | null; installPhotoLat?: number | null; installPhotoLng?: number | null; installPhotoAt?: string | null;
 };
 
 type Flyer = {
@@ -386,6 +390,165 @@ function PhoneLogin() {
 }
 
 // ─── Add email banner ────────────────────────────────────────────────────────
+
+// ─── GPS-verified onboarding photo upload ────────────────────────────────────
+// The onboarding pipeline needs field evidence with coordinates: a shop-front
+// photo before Team verification passes, and an installed-TV photo before Site
+// visit & install (the admin API refuses to advance the stage without them).
+// Coordinates come from the photo's EXIF GPS (GPS-camera apps embed them); if
+// the file has none, we fall back to the device's location at upload time.
+
+const PHOTO_COPY = {
+  shop: {
+    title: 'Upload a GPS photo of your shop front',
+    hint:  'Take it with a GPS map camera app, standing in front of the store. Our team verifies the location before your verification call.',
+  },
+  install: {
+    title: 'Upload a GPS photo of the installed TV',
+    hint:  'After the screen is installed, take a GPS-tagged photo showing the TV running in your store.',
+  },
+} as const;
+
+function GpsPhotoUpload({ kind, store, onUploaded }: {
+  kind: 'shop' | 'install';
+  store: StoreInfo;
+  onUploaded: (patch: Partial<StoreInfo>) => void;
+}) {
+  const [busy,  setBusy]  = useState<null | 'reading' | 'locating' | 'uploading'>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFile = async (file: File) => {
+    setError(null);
+
+    setBusy('reading');
+    let coords = await extractGpsFromFile(file);
+    let source: 'exif' | 'device' = 'exif';
+
+    if (!coords) {
+      // No EXIF GPS (location off, or a format like HEIC) — use the phone's
+      // current position instead; the partner is standing at the shop anyway.
+      setBusy('locating');
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }));
+        coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        source = 'device';
+      } catch {
+        setBusy(null);
+        setError('Could not read the photo location. Use a GPS map camera app, or allow location access and retry.');
+        return;
+      }
+    }
+
+    setBusy('uploading');
+
+    // Re-encode when the file is too big for the 4 MB body cap OR in a format
+    // the server doesn't take (HEIC etc.) — coordinates were already read from
+    // the original bytes above, so losing EXIF here is fine.
+    const SERVER_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+    let blob: Blob = file;
+    if (file.size > 3.5 * 1024 * 1024 || !SERVER_TYPES.includes(file.type)) {
+      try {
+        blob = await downscaleImage(file);
+      } catch {
+        setBusy(null);
+        setError('Could not read this photo format. Please use a JPEG photo (GPS camera apps save JPEG).');
+        return;
+      }
+    }
+
+    try {
+      const fd = new FormData();
+      fd.append('file', blob, 'photo.jpg');
+      fd.append('kind', kind);
+      fd.append('lat', String(coords.lat));
+      fd.append('lng', String(coords.lng));
+      fd.append('source', source);
+      fd.append('storeId', store.id ?? '');
+      const res  = await fetch('/api/stores/verification-photo', { method: 'POST', body: fd });
+      const body = await res.json().catch(() => null) as { url?: string; error?: string } | null;
+      if (!res.ok || !body?.url) { setError(body?.error ?? 'Upload failed. Please try again.'); return; }
+      onUploaded(kind === 'shop'
+        ? { shopPhotoUrl: body.url, shopPhotoLat: coords.lat, shopPhotoLng: coords.lng, shopPhotoAt: new Date().toISOString() }
+        : { installPhotoUrl: body.url, installPhotoLat: coords.lat, installPhotoLng: coords.lng, installPhotoAt: new Date().toISOString() });
+    } catch {
+      setError('Could not reach the server. Check your connection and try again.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const copy = PHOTO_COPY[kind];
+  return (
+    <div className="mt-2 rounded-xl border border-dashed border-primary/40 bg-primary/5 p-3 space-y-2">
+      <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
+        <Camera className="h-3.5 w-3.5 text-primary shrink-0" /> {copy.title}
+      </p>
+      <p className="text-[11px] text-muted-foreground leading-relaxed">{copy.hint}</p>
+      {busy ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-1.5">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          {busy === 'reading' ? 'Reading photo location…' : busy === 'locating' ? 'Getting your location…' : 'Uploading…'}
+        </div>
+      ) : (
+        <label className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground cursor-pointer hover:bg-primary/90 transition-colors">
+          <Camera className="h-3.5 w-3.5" /> Take / choose photo
+          {/* No `capture` attribute: it would force the system camera and block
+              picking the GPS-map-camera photo from the gallery — the primary flow. */}
+          <input type="file" accept="image/*" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void handleFile(f); }} />
+        </label>
+      )}
+      {error && <p className="text-[11px] text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+// Downscale to ≤1920px JPEG so any phone photo fits the 4 MB upload cap. EXIF
+// (incl. GPS) is stripped by re-encoding — coordinates are extracted from the
+// original bytes before this runs.
+async function downscaleImage(file: File): Promise<Blob> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el); el.onerror = () => reject(new Error('bad image'));
+      el.src = url;
+    });
+    const scale  = Math.min(1, 1920 / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width  = Math.max(1, Math.round(img.naturalWidth  * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob) throw new Error('encode failed');
+    return blob;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function GpsPhotoChip({ url, lat, lng, at }: { url: string; lat?: number | null; lng?: number | null; at?: string | null }) {
+  return (
+    <div className="mt-2 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-2.5 py-1.5">
+      <a href={url} target="_blank" rel="noreferrer" className="shrink-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt="Verification photo" className="h-9 w-9 rounded object-cover" />
+      </a>
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-bold text-green-700 flex items-center gap-1">
+          <CheckCircle2 className="h-3 w-3 shrink-0" /> GPS photo uploaded{at ? ` · ${fmtDate(at)}` : ''}
+        </p>
+        {typeof lat === 'number' && typeof lng === 'number' && (
+          <a href={`https://maps.google.com/?q=${lat},${lng}`} target="_blank" rel="noreferrer"
+            className="text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2 flex items-center gap-1">
+            <MapPin className="h-2.5 w-2.5 shrink-0" /> {lat.toFixed(6)}, {lng.toFixed(6)}
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function EmailBanner({ store, onSave }: { store: StoreInfo; onSave: (email: string) => void }) {
   const [open,  setOpen]  = useState(!store.email);
@@ -963,6 +1126,17 @@ function MainDashboard({ store, onLogout }: { store: StoreInfo; onLogout: () => 
     setStoreData((prev) => ({ ...prev, email }));
   };
 
+  const savePhoto = (patch: Partial<StoreInfo>) => {
+    setStoreData((prev) => {
+      const next = { ...prev, ...patch };
+      // Write through to the cached session — without this, a reload before the
+      // next /me sync (or any no-cookie session) loses the chip and re-shows
+      // the upload box even though the server already has the photo.
+      try { localStorage.setItem(LS_SESSION_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -1092,9 +1266,19 @@ function MainDashboard({ store, onLogout }: { store: StoreInfo; onLogout: () => 
                             </div>
                             {i < timeline.length - 1 && <div className={`w-px flex-1 min-h-[24px] mt-1 mb-1 ${item.done ? 'bg-primary/30' : 'bg-border'}`} />}
                           </div>
-                          <div className="pb-4">
+                          <div className="pb-4 flex-1 min-w-0">
                             <p className={`text-sm font-semibold ${item.done ? 'text-foreground' : item.active ? 'text-primary' : 'text-muted-foreground'}`}>{item.label}</p>
                             <p className="text-xs text-muted-foreground mt-0.5">{item.desc}</p>
+                            {/* GPS photo evidence: shop front for Team verification (step 2),
+                                installed TV for Site visit & install (step 3). */}
+                            {i === 1 && (storeData.shopPhotoUrl
+                              ? <GpsPhotoChip url={storeData.shopPhotoUrl} lat={storeData.shopPhotoLat} lng={storeData.shopPhotoLng} at={storeData.shopPhotoAt} />
+                              : <GpsPhotoUpload kind="shop" store={storeData} onUploaded={savePhoto} />)}
+                            {i === 2 && (storeData.installPhotoUrl
+                              ? <GpsPhotoChip url={storeData.installPhotoUrl} lat={storeData.installPhotoLat} lng={storeData.installPhotoLng} at={storeData.installPhotoAt} />
+                              : storeData.shopPhotoUrl
+                              ? <GpsPhotoUpload kind="install" store={storeData} onUploaded={savePhoto} />
+                              : null)}
                           </div>
                         </div>
                       ))}
