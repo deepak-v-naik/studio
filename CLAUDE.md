@@ -133,7 +133,8 @@ ALIVE_PLAYER_API.md                       — Android player integration guide
 | `Account / Session / VerificationToken` | Auth.js standard. |
 | `Store` | Kirana store profile. Map coords, referral code, gstin. |
 | `Brand` | Brand profile. `walletPaise` BigInt (T2). |
-| `Campaign` | Brand campaign + Razorpay order. |
+| `Campaign` | Brand campaign + Razorpay order. `status`: `upcoming \| pending_payment \| trial \| active \| completed` — `active` set only by verify-payment; ₹0 bookings are normalised to `trial`. |
+| `Coupon` | Brand-onboarding discount codes. `FLAT` (₹ off subtotal) or `PERCENT`, optional `expiresAt` / `maxRedemptions`. Managed in Admin → Coupons; validated server-side. |
 | `Device` | Physical screen. `hardwareKey` from Android. `groupName` for group scheduling. |
 | `Content` | Media file. `objectKey` = R2 path. `md5` for player cache invalidation. |
 | `Playlist` + `PlaylistItem` | Ordered content list with per-item duration. |
@@ -193,7 +194,7 @@ Form data persisted to `sessionStorage('alive_store_draft')` so navigating to ag
 
 - Protected by `admin-password` header vs `ADMIN_PASSWORD` env var
 - `sessionStorage.getItem('alive_admin_pw')` in browser for API calls
-- Tabs: Flyers | Stores | Campaigns | Screens | Content | Playlists | Schedules | Reports | Monitoring | Payments | Site Media | Roadmap
+- Tabs: Dashboard | Flyers | Stores | Products | Campaigns | Payments | Coupons | Screens | Content | Programming | Slot inventory | Compositions | Layouts | Reports | Monitoring | Media | Alerts | Platform Map
 
 ---
 
@@ -218,10 +219,13 @@ Form data persisted to `sessionStorage('alive_store_draft')` so navigating to ag
 
 ## Brand Onboarding
 
-- Flow: audience → locations → duration → creative → pricing → agreement → payment
-- Promo code `GETALIVENOW`: ₹799 → ₹699
-- GST 18% on top of base price
-- Razorpay for payment
+- Flow: welcome → brand details → campaign setup (screens, duration, start date) → terms of service → payment (Razorpay | Confirm Booking — Pay later | trial via `?trial=1`)
+- Self-serve bounds: screens 1–50, months 1–12 — enforced in the UI stepper AND server-side (`create-order`, `campaigns/save`). Bigger deals go through sales.
+- Volume tiers: ₹799 (1) / ₹699 (3+) / ₹599 (10+) / ₹549 (20+) per screen per month; GST 18% on the discounted subtotal
+- Coupons are `Coupon` DB rows, managed in Admin → Coupons — no hardcoded codes. UI preview via `/api/coupons/validate`; `create-order` recomputes the discount server-side, so the browser's total is never trusted. Live code: `GETALIVENOW` = FLAT ₹100 off subtotal (no expiry/cap).
+- Trials (`?trial=1`): once per email — the guard counts `status: 'trial'` and legacy ₹0 rows. Saved with `status: 'trial'`, `totalAmount: 0`; any ₹0 booking is normalised to `trial` by `campaigns/save`. Trial done-page tells brands to email creatives to their AM (no payment gate).
+- Paid bookings: `verify-payment` checks the Razorpay signature, then fetches the order back from Razorpay and stores **its** amount as `totalAmount` — the client-sent total is display-only. Only `verify-payment` can set `status: 'active'`; `campaigns/save` accepts `upcoming | pending_payment | trial` only.
+- Company name shown to brands is **VS Collective LLP** everywhere (Razorpay checkout displays "ALIVE") — don't reintroduce "Alive Media" / "Alive Advertising Solutions"
 
 ---
 
