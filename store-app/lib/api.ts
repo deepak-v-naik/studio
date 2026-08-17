@@ -96,3 +96,43 @@ export async function updateStoreMe(
     body: JSON.stringify(patch),
   });
 }
+
+/**
+ * Uploads a GPS-verified onboarding photo (shop front / installed TV).
+ * Coordinates are REQUIRED — the server rejects uploads without a fix.
+ * `source` records where they came from: the photo's EXIF or the device.
+ */
+export async function uploadVerificationPhoto(opts: {
+  storeId: string;
+  kind: 'shop' | 'install';
+  fileUri: string;
+  mimeType: string;
+  lat: number;
+  lng: number;
+  source: 'exif' | 'device';
+}): Promise<{ ok: boolean; url: string }> {
+  const form = new FormData();
+  form.append('storeId', opts.storeId);
+  form.append('kind', opts.kind);
+  form.append('lat', String(opts.lat));
+  form.append('lng', String(opts.lng));
+  form.append('source', opts.source);
+  // React Native FormData file part: { uri, name, type }
+  form.append('file', { uri: opts.fileUri, name: `${opts.kind}.jpg`, type: opts.mimeType } as unknown as Blob);
+
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 45000);
+  try {
+    const res  = await fetch(`${API_BASE_URL}/api/stores/verification-photo`, {
+      method: 'POST', body: form, signal: controller.signal,
+    });
+    const body = await res.json().catch(() => ({})) as { ok?: boolean; url?: string; error?: string };
+    if (!res.ok || !body.ok || !body.url) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return { ok: true, url: body.url };
+  } catch (e) {
+    const err = e as Error;
+    throw new Error(err.name === 'AbortError' ? 'Upload timed out. Please try again.' : err.message);
+  } finally {
+    clearTimeout(tid);
+  }
+}

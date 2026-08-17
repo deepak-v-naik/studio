@@ -21,6 +21,16 @@ export type StoreSession = {
   liveAt?:          string;
   onboardingStage?: string;
   deviceCount?:     number;
+  // GPS-verified onboarding photos (shop front gates Team verification,
+  // installed TV gates Site visit & install — see /api/stores/verification-photo)
+  shopPhotoUrl?:     string | null;
+  shopPhotoLat?:     number | null;
+  shopPhotoLng?:     number | null;
+  shopPhotoAt?:      string | null;
+  installPhotoUrl?:  string | null;
+  installPhotoLat?:  number | null;
+  installPhotoLng?:  number | null;
+  installPhotoAt?:   string | null;
   payoutMethod?:    string;
   upiId?:           string;
   bankAccountName?: string;

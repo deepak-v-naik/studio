@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Linking,
-  StyleSheet, ActivityIndicator, Share,
+  StyleSheet, ActivityIndicator, Share, Image, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { C } from '../../lib/colors';
 import { loadSession, saveSession } from '../../lib/storage';
-import { getStoreMe, type StoreSession } from '../../lib/api';
+import { getStoreMe, uploadVerificationPhoto, type StoreSession } from '../../lib/api';
 
 type Stage = 'new' | 'contacted' | 'visited' | 'installed' | 'live' | string;
 
@@ -24,6 +26,127 @@ function buildTimeline(store: StoreSession) {
     { label: 'Site visit & install', desc: 'Free screen installed at your store.', done: isInstalled, active: isContacted && !isInstalled },
     { label: 'Screen goes live', desc: 'Ads start running — you start earning!', done: isLive, active: isInstalled && !isLive },
   ];
+}
+
+// ─── GPS-verified onboarding photos ─────────────────────────────────────────
+// Mirrors the web dashboard: a shop-front photo is required before Team
+// verification passes, an installed-TV photo before Site visit & install (the
+// admin API refuses to advance the stage without them). Coordinates come from
+// the picked photo's EXIF (GPS-camera apps embed them) with the device's
+// location as fallback, and are sent as form fields — picker compression may
+// strip EXIF from the uploaded bytes, but the metadata is read before that.
+
+function gpsFromExif(exif?: Record<string, unknown> | null): { lat: number; lng: number } | null {
+  if (!exif) return null;
+  let lat = typeof exif.GPSLatitude === 'number' ? exif.GPSLatitude : null;
+  let lng = typeof exif.GPSLongitude === 'number' ? exif.GPSLongitude : null;
+  if (lat == null || lng == null) return null;
+  // iOS reports unsigned values + hemisphere refs; Android reports signed.
+  if (exif.GPSLatitudeRef === 'S' && lat > 0) lat = -lat;
+  if (exif.GPSLongitudeRef === 'W' && lng > 0) lng = -lng;
+  if (!isFinite(lat) || !isFinite(lng) || (lat === 0 && lng === 0)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
+function GpsPhotoRow({ kind, store, onUploaded }: {
+  kind: 'shop' | 'install';
+  store: StoreSession;
+  onUploaded: (patch: Partial<StoreSession>) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const url = kind === 'shop' ? store.shopPhotoUrl : store.installPhotoUrl;
+  const lat = kind === 'shop' ? store.shopPhotoLat : store.installPhotoLat;
+  const lng = kind === 'shop' ? store.shopPhotoLng : store.installPhotoLng;
+
+  if (url) {
+    return (
+      <View style={s.photoChip}>
+        <Image source={{ uri: url }} style={s.photoThumb} />
+        <View style={{ flex: 1 }}>
+          <Text style={s.photoChipTitle}>✓ GPS photo uploaded</Text>
+          {typeof lat === 'number' && typeof lng === 'number' && (
+            <Text
+              style={s.photoChipCoords}
+              onPress={() => void Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`)}
+            >
+              {lat.toFixed(6)}, {lng.toFixed(6)}
+            </Text>
+          )}
+        </View>
+      </View>
+    );
+  }
+
+  const pick = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission required', 'Photo access is needed to upload your GPS photo.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.7, // keeps the upload under the server's 4 MB cap
+      exif: true,
+    });
+    if (res.canceled || !res.assets[0]) return;
+    const asset = res.assets[0];
+
+    setBusy(true);
+    try {
+      let coords = gpsFromExif(asset.exif as Record<string, unknown> | null);
+      let source: 'exif' | 'device' = 'exif';
+      if (!coords) {
+        // Photo has no GPS metadata — use the phone's position instead; the
+        // partner is standing at the shop anyway.
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (perm.status !== 'granted') {
+          Alert.alert('Location needed', 'This photo has no GPS data. Allow location access and retry, or use a GPS map camera app.');
+          return;
+        }
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        source = 'device';
+      }
+      const out = await uploadVerificationPhoto({
+        storeId: store.id ?? '', kind, fileUri: asset.uri,
+        mimeType: asset.mimeType ?? 'image/jpeg', lat: coords.lat, lng: coords.lng, source,
+      });
+      const now = new Date().toISOString();
+      onUploaded(kind === 'shop'
+        ? { shopPhotoUrl: out.url, shopPhotoLat: coords.lat, shopPhotoLng: coords.lng, shopPhotoAt: now }
+        : { installPhotoUrl: out.url, installPhotoLat: coords.lat, installPhotoLng: coords.lng, installPhotoAt: now });
+    } catch (e) {
+      Alert.alert('Upload failed', (e as Error).message ?? 'Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={s.photoBox}>
+      <Text style={s.photoBoxTitle}>
+        {kind === 'shop' ? 'Upload a GPS photo of your shop front' : 'Upload a GPS photo of the installed TV'}
+      </Text>
+      <Text style={s.photoBoxHint}>
+        {kind === 'shop'
+          ? 'Take it with a GPS map camera app, standing in front of the store. Our team verifies the location before your verification call.'
+          : 'A GPS-tagged photo showing the TV running in your store.'}
+      </Text>
+      {busy ? (
+        <View style={s.photoBusy}>
+          <ActivityIndicator size="small" color={C.primary} />
+          <Text style={s.photoBusyText}>Uploading…</Text>
+        </View>
+      ) : (
+        <TouchableOpacity style={s.photoBtn} onPress={() => void pick()}>
+          <Ionicons name="camera-outline" size={15} color="#fff" />
+          <Text style={s.photoBtnText}>Take / choose photo</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 }
 
 export default function Overview() {
@@ -62,6 +185,15 @@ export default function Overview() {
     await Clipboard.setStringAsync(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const applyPhoto = (patch: Partial<StoreSession>) => {
+    setStore((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      void saveSession(next); // write-through so a restart keeps the chip
+      return next;
+    });
   };
 
   return (
@@ -132,6 +264,12 @@ export default function Overview() {
             <View style={s.timelineContent}>
               <Text style={[s.timelineLabel, item.active && { color: C.primary }]}>{item.label}</Text>
               <Text style={s.timelineDesc}>{item.desc}</Text>
+              {/* GPS photo evidence: shop front for step 2, installed TV for step 3
+                  (install upload appears only after the shop photo exists) */}
+              {i === 1 && <GpsPhotoRow kind="shop" store={store} onUploaded={applyPhoto} />}
+              {i === 2 && (store.installPhotoUrl || store.shopPhotoUrl) && (
+                <GpsPhotoRow kind="install" store={store} onUploaded={applyPhoto} />
+              )}
             </View>
           </View>
         ))}
@@ -274,4 +412,25 @@ const s = StyleSheet.create({
   faqRow: { gap: 3, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#f3f4f6' },
   faqQ: { fontSize: 12, fontWeight: '700', color: C.text },
   faqA: { fontSize: 12, color: C.textSub, lineHeight: 17 },
+  // GPS verification photos
+  photoBox: {
+    marginTop: 8, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed',
+    borderColor: C.primaryBorder, backgroundColor: C.primaryLight, padding: 10, gap: 4,
+  },
+  photoBoxTitle: { fontSize: 12, fontWeight: '700', color: C.text },
+  photoBoxHint: { fontSize: 10.5, color: C.textSub, lineHeight: 15 },
+  photoBtn: {
+    marginTop: 4, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, backgroundColor: C.primary, borderRadius: 9, paddingVertical: 9, alignSelf: 'flex-start', paddingHorizontal: 14,
+  },
+  photoBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
+  photoBusy: { marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  photoBusyText: { fontSize: 12, color: C.textSub },
+  photoChip: {
+    marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderRadius: 10, borderWidth: 1, borderColor: '#bbf7d0', backgroundColor: C.successLight, padding: 8,
+  },
+  photoThumb: { width: 36, height: 36, borderRadius: 6, backgroundColor: C.border },
+  photoChipTitle: { fontSize: 11, fontWeight: '700', color: '#15803d' },
+  photoChipCoords: { fontSize: 10, color: C.textSub, textDecorationLine: 'underline', marginTop: 1 },
 });
