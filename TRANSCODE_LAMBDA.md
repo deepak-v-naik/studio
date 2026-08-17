@@ -87,8 +87,13 @@ aws lambda create-function \
   --region ap-south-1
 ```
 
-For every future update: rebuild, `docker push` the same tag (or a new one),
-then `aws lambda update-function-code --function-name alive-transcode
+For every future update: **automatic** — the
+`.github/workflows/transcode-lambda-deploy.yml` workflow rebuilds, pushes to
+ECR, and updates the function on every push to `main` that touches
+`transcode-lambda/` (needs `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` repo
+secrets; can also be run manually from the Actions tab). The manual path still
+works and stays interchangeable: rebuild, `docker push` the same tag (or a new
+one), then `aws lambda update-function-code --function-name alive-transcode
 --image-uri <the-uri>`.
 
 - **Memory 2048 MB minimum** — Lambda allocates CPU proportional to memory,

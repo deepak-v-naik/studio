@@ -1,0 +1,84 @@
+# Builds the transcode Lambda's container image and deploys it whenever
+# transcode-lambda/ changes on main. This closes the gap that stranded the
+# ffprobe-EACCES Dockerfile fix (87d24e0): the documented deploy path was a
+# fully manual docker build → ECR push → update-function-code on an operator
+# machine (see TRANSCODE_LAMBDA.md), so committed fixes didn't reach the
+# running Lambda until someone remembered to do it.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# The IAM user needs:
+#   - ecr:GetAuthorizationToken (account-wide)
+#   - ecr:BatchCheckLayerAvailability, ecr:InitiateLayerUpload,
+#     ecr:UploadLayerPart, ecr:CompleteLayerUpload, ecr:PutImage,
+#     ecr:BatchGetImage (on the alive-transcode repository)
+#   - lambda:UpdateFunctionCode, lambda:GetFunction (on the alive-transcode function)
+#
+# First run: trigger manually (Actions → this workflow → Run workflow) to ship
+# the already-committed Dockerfile fix — the paths filter only fires on future
+# commits that touch transcode-lambda/.
+
+name: Deploy transcode Lambda
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'transcode-lambda/**'
+      - '.github/workflows/transcode-lambda-deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: transcode-lambda-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: alive-transcode
+  FUNCTION_NAME: alive-transcode
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tag with the commit SHA (immutable — what the Lambda actually runs, and
+      # what you roll back to) plus latest (matches the manual path in
+      # TRANSCODE_LAMBDA.md so operator-run deploys stay interchangeable).
+      - name: Build and push image
+        working-directory: transcode-lambda
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" \
+                       -t "$REGISTRY/$ECR_REPOSITORY:latest" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
+          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
+
+      - name: Update Lambda function code
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --image-uri "$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
+
+      - name: Wait for update to complete and verify
+        run: |
+          aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+          aws lambda get-function --function-name "$FUNCTION_NAME" \
+            --query '{State: Configuration.State, LastUpdateStatus: Configuration.LastUpdateStatus, Image: Code.ImageUri}' \
+            --output table
