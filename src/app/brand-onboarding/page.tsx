@@ -2,9 +2,11 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, addMonths } from 'date-fns';
 import { useSession } from 'next-auth/react';
+import { getScreenPrice, getListPrice } from '@/lib/brand-pricing';
 import { Logo } from '@/components/icons/logo';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -28,6 +30,11 @@ type OnboardingFormData = {
   months: number;
   startDate: string;
   agreementSigned: boolean;
+  // Store ids picked on the map — a routing hint for ops, not a reservation.
+  // When non-empty, screens is kept in sync with its length. Names are kept
+  // client-side so later steps can echo the picks; never sent to the API.
+  preferredStoreIds: string[];
+  preferredStoreNames: Record<string, string>;
 };
 
 type RazorpayResponse = {
@@ -38,11 +45,16 @@ type RazorpayResponse = {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
+// Leaflet touches window — client-only.
+const ScreenPickerMap = dynamic(() => import('@/components/brand/screen-picker-map'), { ssr: false });
+
+// Marketing tiers — prices come from the shared pricing lib (list = struck-through
+// anchor, online = charged), so the display can never drift from the charge.
 const SCREEN_TIERS = [
-  { screens: 1,  pricePerScreen: 799,  playsPerDay: 144,  monthlyViews: 4320  },
-  { screens: 3,  pricePerScreen: 699,  playsPerDay: 432,  monthlyViews: 12960, popular: true },
-  { screens: 10, pricePerScreen: 599,  playsPerDay: 1440, monthlyViews: 43200 },
-  { screens: 20, pricePerScreen: 549,  playsPerDay: 2880, monthlyViews: 86400 },
+  { screens: 1,  pricePerScreen: getScreenPrice(1),  listPerScreen: getListPrice(1),  playsPerDay: 144,  monthlyViews: 4320  },
+  { screens: 3,  pricePerScreen: getScreenPrice(3),  listPerScreen: getListPrice(3),  playsPerDay: 432,  monthlyViews: 12960, popular: true },
+  { screens: 10, pricePerScreen: getScreenPrice(10), listPerScreen: getListPrice(10), playsPerDay: 1440, monthlyViews: 43200 },
+  { screens: 20, pricePerScreen: getScreenPrice(20), listPerScreen: getListPrice(20), playsPerDay: 2880, monthlyViews: 86400 },
 ] as const;
 
 const DURATION_OPTIONS = [
@@ -59,14 +71,6 @@ const STEPS = ['Details', 'Campaign', 'Agreement', 'Payment'];
 
 const fmt = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
-function getScreenPrice(n: number): number {
-  if (n >= 20) return 549;
-  if (n >= 10) return 599;
-  if (n >= 3)  return 699;
-  return 799;
-}
-
-const BASE_PRICE       = 799;
 // Self-serve ceiling — matches the server bound in create-order / campaigns-save.
 // Bigger campaigns go through sales so ops can confirm screen inventory first.
 const MAX_SCREENS      = 50;
@@ -437,19 +441,41 @@ function StepDetails({
 }
 
 function StepCampaign({
-  data, onChange, onNext, onBack,
+  data, onChange, onNext, onBack, isTrial,
 }: {
   data: OnboardingFormData;
-  onChange: (k: keyof OnboardingFormData, v: number | string) => void;
+  onChange: (k: keyof OnboardingFormData, v: number | string | string[] | Record<string, string>) => void;
   onNext: () => void;
   onBack: () => void;
+  isTrial?: boolean;
 }) {
   const pricePerScreen = getScreenPrice(data.screens);
+  const listPerScreen  = getListPrice(data.screens);
   const total          = pricePerScreen * data.screens * data.months;
   const valid          = data.screens > 0 && data.months > 0 && data.startDate;
+  const mapDriven      = data.preferredStoreIds.length > 0;
+  const [capHit, setCapHit] = useState(false);
 
-  const adjustScreens = (delta: number) => {
-    onChange('screens', Math.min(MAX_SCREENS, Math.max(1, data.screens + delta)));
+  // Manual count controls clear any map selection — one source of truth for count.
+  const setCount = (n: number) => {
+    if (mapDriven) { onChange('preferredStoreIds', []); onChange('preferredStoreNames', {}); }
+    setCapHit(false);
+    onChange('screens', Math.min(MAX_SCREENS, Math.max(1, n)));
+  };
+  const adjustScreens = (delta: number) => setCount(data.screens + delta);
+
+  const toggleStore = (id: string, storeName: string) => {
+    const isSelected = data.preferredStoreIds.includes(id);
+    if (!isSelected && data.preferredStoreIds.length >= MAX_SCREENS) { setCapHit(true); return; }
+    setCapHit(false);
+    const next = isSelected
+      ? data.preferredStoreIds.filter((x) => x !== id)
+      : [...data.preferredStoreIds, id];
+    onChange('preferredStoreIds', next);
+    const names = { ...data.preferredStoreNames };
+    if (isSelected) delete names[id]; else names[id] = storeName;
+    onChange('preferredStoreNames', names);
+    if (next.length > 0) onChange('screens', next.length);
   };
 
   return (
@@ -459,8 +485,30 @@ function StepCampaign({
           Campaign setup
         </motion.h2>
         <motion.p variants={fadeUp} className="text-sm text-muted-foreground">
-          Choose your screen count, start date, and duration.
+          Choose your screens, duration, and start date.
         </motion.p>
+      </motion.div>
+
+      {/* Map picker — renders nothing (including its heading) when no live screens */}
+      <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-3">
+        <motion.div variants={fadeUp}>
+          <ScreenPickerMap
+            selected={data.preferredStoreIds}
+            onToggle={toggleStore}
+            startDate={data.startDate}
+          />
+        </motion.div>
+        {capHit && (
+          <motion.p variants={fadeUp} className="text-xs text-amber-600 font-semibold">
+            Self-serve bookings are capped at {MAX_SCREENS} screens — contact hello@wearealive.in for bigger campaigns.
+          </motion.p>
+        )}
+        {mapDriven && (
+          <motion.p variants={fadeUp} className="text-xs text-muted-foreground">
+            <strong className="text-foreground">{data.preferredStoreIds.length} screen{data.preferredStoreIds.length > 1 ? 's' : ''} selected on the map.</strong>{' '}
+            Our team routes your campaign to these stores. Changing the plan cards or custom count below switches you back to a plain count and clears your map picks.
+          </motion.p>
+        )}
       </motion.div>
 
       {/* Screen tiers */}
@@ -470,13 +518,15 @@ function StepCampaign({
         </motion.p>
         <motion.div variants={fadeUp} className="grid grid-cols-2 gap-3 sm:grid-cols-4 mt-5">
           {SCREEN_TIERS.map((t) => {
-            const active   = data.screens === t.screens;
+            // In map mode no card is "chosen" — clicking one is the visible
+            // switch back to plain-count booking.
+            const active   = !mapDriven && data.screens === t.screens;
             const popular  = 'popular' in t && t.popular;
             return (
               <motion.button
                 key={t.screens}
                 type="button"
-                onClick={() => onChange('screens', t.screens)}
+                onClick={() => setCount(t.screens)}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.97 }}
                 className={`relative rounded-xl border border-border bg-card text-left ${popular ? 'pt-8 pb-4 px-4' : 'p-4'}`}
@@ -499,18 +549,12 @@ function StepCampaign({
                     <p className="text-xs text-muted-foreground mt-0.5">{t.screens === 1 ? 'screen' : 'screens'}</p>
                   </div>
                   <div className="border-t border-border pt-3 space-y-1">
-                    {t.pricePerScreen < BASE_PRICE ? (
-                      <p className="text-[10px] text-muted-foreground/50 line-through leading-none">{fmt(BASE_PRICE)}/screen</p>
-                    ) : (
-                      <p className="text-[10px] text-muted-foreground/50 leading-none invisible">–</p>
-                    )}
+                    <p className="text-[10px] text-muted-foreground/50 line-through leading-none">{fmt(t.listPerScreen)}/screen</p>
                     <p className="text-base font-black text-foreground leading-none">{fmt(t.pricePerScreen)}</p>
-                    <p className="text-[10px] text-muted-foreground leading-none">per screen / month</p>
-                    {t.pricePerScreen < BASE_PRICE && (
-                      <p className="text-[11px] font-bold text-green-700 leading-none">
-                        Save ₹{BASE_PRICE - t.pricePerScreen}/screen/mo
-                      </p>
-                    )}
+                    <p className="text-[10px] text-muted-foreground leading-none">per screen / month · online price</p>
+                    <p className="text-[11px] font-bold text-green-700 leading-none">
+                      Save ₹{t.listPerScreen - t.pricePerScreen}/screen/mo
+                    </p>
                   </div>
                   <div className="space-y-1 pt-1">
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -539,6 +583,7 @@ function StepCampaign({
           <div>
             <p className="text-sm font-semibold text-foreground">Custom count</p>
             <p className="text-xs text-muted-foreground mt-0.5">
+              <span className="line-through text-muted-foreground/50">{fmt(listPerScreen)}</span>{' '}
               {fmt(pricePerScreen)} per screen · {fmt(pricePerScreen * data.screens)}/month
             </p>
           </div>
@@ -559,7 +604,7 @@ function StepCampaign({
               value={data.screens}
               onChange={(e) => {
                 const v = parseInt(e.target.value, 10);
-                if (!isNaN(v) && v >= 1) onChange('screens', Math.min(MAX_SCREENS, v));
+                if (!isNaN(v) && v >= 1) setCount(v);
               }}
               className="h-9 w-16 rounded-lg border border-border bg-background text-center text-base font-black text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
             />
@@ -627,11 +672,11 @@ function StepCampaign({
                 <p className="text-sm text-muted-foreground">
                   {fmt(pricePerScreen)} × {data.screens} {data.screens === 1 ? 'screen' : 'screens'} × {data.months} {data.months === 1 ? 'month' : 'months'}
                 </p>
-                {pricePerScreen < BASE_PRICE && (
-                  <p className="text-xs text-green-600 font-semibold">
-                    Saving {fmt((BASE_PRICE - pricePerScreen) * data.screens * data.months)} vs list price
-                  </p>
-                )}
+                <p className="text-xs text-green-600 font-semibold">
+                  {isTrial
+                    ? <>Campaign value {fmt(total)} — free on trial</>
+                    : <>Saving {fmt((listPerScreen - pricePerScreen) * data.screens * data.months)} vs standard rate</>}
+                </p>
               </div>
               <div className="text-right">
                 <motion.p
@@ -641,9 +686,9 @@ function StepCampaign({
                   transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                   className="text-3xl font-black text-foreground tracking-tight"
                 >
-                  {fmt(total)}
+                  {isTrial ? '₹0' : fmt(total)}
                 </motion.p>
-                <p className="text-xs text-muted-foreground mt-0.5">GST invoice on payment</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{isTrial ? 'Free trial — ₹0 due today' : 'GST invoice on payment'}</p>
               </div>
             </div>
             <div className="mt-4 pt-4 border-t border-border grid grid-cols-3 gap-4 text-center">
@@ -680,12 +725,13 @@ function StepCampaign({
 }
 
 function StepAgreement({
-  data, onChange, onNext, onBack,
+  data, onChange, onNext, onBack, isTrial,
 }: {
   data: OnboardingFormData;
   onChange: (k: keyof OnboardingFormData, v: boolean) => void;
   onNext: () => void;
   onBack: () => void;
+  isTrial?: boolean;
 }) {
   const pricePerScreen = getScreenPrice(data.screens);
   const monthlyFee     = fmt(pricePerScreen * data.screens);
@@ -704,15 +750,23 @@ function StepAgreement({
       n: '2', title: 'Your campaign',
       items: [
         `This campaign runs for ${data.months} ${data.months === 1 ? 'month' : 'months'} across ${data.screens} ${data.screens === 1 ? 'screen' : 'screens'}.`,
-        `The monthly fee is ${monthlyFee} plus applicable GST.`,
-        'Campaign dates are confirmed after payment and creative submission.',
+        isTrial
+          ? `This is a free trial campaign — the standard monthly fee of ${monthlyFee} plus GST is waived; nothing is payable.`
+          : `The monthly fee is ${monthlyFee} plus applicable GST.`,
+        isTrial
+          ? 'Campaign dates are confirmed after creative submission.'
+          : 'Campaign dates are confirmed after payment and creative submission.',
       ],
     },
     {
       n: '3', title: 'Payment',
       items: [
-        'Payment is collected upfront via Razorpay before your campaign is activated.',
-        'A GST invoice will be sent to your registered email within 2 business days of payment.',
+        isTrial
+          ? 'No payment is due for this trial campaign. Renewals after the trial are charged at the standard rates.'
+          : 'Payment is collected upfront via Razorpay before your campaign is activated.',
+        isTrial
+          ? 'No invoice is raised for a ₹0 trial.'
+          : 'A GST invoice will be sent to your registered email within 2 business days of payment.',
         'Fees for completed campaign months are non-refundable. If we cancel your campaign for reasons within our control, we will issue a prorated refund.',
         'Late or disputed payments attract interest of 2% per month.',
       ],
@@ -857,7 +911,7 @@ function StepAgreement({
                 {data.email      && <p className="text-muted-foreground">{data.email}</p>}
                 {data.phone      && <p className="text-muted-foreground">+91 {data.phone}</p>}
                 {data.gstin      && <p className="text-muted-foreground">GSTIN: {data.gstin}</p>}
-                <p className="text-muted-foreground">Campaign: {data.screens} screen{data.screens !== 1 ? 's' : ''} · {data.months} month{data.months !== 1 ? 's' : ''} · {monthlyFee}/mo</p>
+                <p className="text-muted-foreground">Campaign: {data.screens} screen{data.screens !== 1 ? 's' : ''} · {data.months} month{data.months !== 1 ? 's' : ''} · {isTrial ? 'free trial — fee waived' : `${monthlyFee}/mo`}</p>
                 <p className="text-muted-foreground">Date of acceptance: {effectiveDate}</p>
               </div>
             </div>
@@ -911,6 +965,7 @@ function StepPayment({
   const [promoBusy, setPromoBusy] = useState(false);
 
   const pricePerScreen = getScreenPrice(data.screens);
+  const listPerScreen  = getListPrice(data.screens);
   const baseSubtotal   = pricePerScreen * data.screens * data.months;
   // Discount derived live from the coupon rule so it stays correct if the buyer
   // changes screens/months after applying (esp. PERCENT coupons).
@@ -999,6 +1054,7 @@ function StepPayment({
                 pricePerScreen,
                 totalAmount:    total, // actual charged amount, incl. any promo discount + GST
                 couponCode:     promoCode || undefined,
+                preferredStoreIds: data.preferredStoreIds,
               },
             }),
           });
@@ -1046,21 +1102,29 @@ function StepPayment({
             <span className="text-muted-foreground">Duration</span>
             <span className="font-semibold text-foreground">{data.months} month{data.months > 1 ? 's' : ''}</span>
           </motion.div>
-          {/* Price per screen */}
+          {/* Price per screen — discount theater is meaningless on a ₹0 trial */}
           <motion.div variants={fadeUp} className="flex items-center justify-between">
             <span className="text-muted-foreground">Price / screen / month</span>
             <span className="flex items-center gap-2 font-semibold text-foreground">
-              {pricePerScreen < BASE_PRICE && (
-                <span className="text-xs text-muted-foreground/50 line-through">{fmt(BASE_PRICE)}</span>
-              )}
+              {!isTrial && <span className="text-xs text-muted-foreground/50 line-through">{fmt(listPerScreen)}</span>}
               {fmt(pricePerScreen)}
               <span className="text-[10px] text-muted-foreground font-normal">excl. GST</span>
             </span>
           </motion.div>
-          {pricePerScreen < BASE_PRICE && (
+          {!isTrial && (
             <motion.div variants={fadeUp} className="flex items-center justify-between text-green-700 text-xs font-semibold">
-              <span>Volume discount</span>
-              <span>−₹{BASE_PRICE - pricePerScreen}/screen/mo</span>
+              <span>Online booking discount</span>
+              <span>−₹{listPerScreen - pricePerScreen}/screen/mo</span>
+            </motion.div>
+          )}
+          {/* Map-picked screens echo */}
+          {data.preferredStoreIds.length > 0 && (
+            <motion.div variants={fadeUp} className="flex flex-wrap gap-1.5 pt-1">
+              {data.preferredStoreIds.map((id) => data.preferredStoreNames[id] && (
+                <span key={id} className="rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                  {data.preferredStoreNames[id]}
+                </span>
+              ))}
             </motion.div>
           )}
 
@@ -1463,6 +1527,7 @@ function StepDone({ data, paymentId, chargedTotal, isTrial }: {
 const INITIAL: OnboardingFormData = {
   brandName: '', contactName: '', email: '', phone: '', gstin: '',
   screens: 3, months: 1, startDate: format(new Date(Date.now() + 7 * 86400000), 'yyyy-MM-dd'), agreementSigned: false,
+  preferredStoreIds: [], preferredStoreNames: {},
 };
 
 const PENDING_KEY = 'alive_pending_campaign';
@@ -1489,7 +1554,9 @@ function BrandOnboardingInner() {
       if (saved) {
         const { form: savedForm } = JSON.parse(saved) as { form: OnboardingFormData };
         localStorage.removeItem(PENDING_KEY);
-        setForm(savedForm);
+        // Merge over defaults — forms saved before newer fields existed
+        // (e.g. preferredStoreIds) would otherwise restore with undefined.
+        setForm({ ...INITIAL, ...savedForm });
         setStep(5); // drop straight back to payment
       }
     } catch { /* ignore */ }
@@ -1534,6 +1601,7 @@ function BrandOnboardingInner() {
           paymentId:      pid,
           orderId:        oid,
           status,
+          preferredStoreIds: form.preferredStoreIds,
         }),
       });
       const body = await res.json().catch(() => null) as { data?: { error?: string } } | null;
@@ -1605,10 +1673,10 @@ function BrandOnboardingInner() {
                 <StepDetails data={form} onChange={(k, v) => update(k, v as string)} onNext={next} onBack={back} />
               )}
               {step === 3 && (
-                <StepCampaign data={form} onChange={(k, v) => update(k, v as number | string)} onNext={next} onBack={back} />
+                <StepCampaign data={form} onChange={(k, v) => update(k, v as OnboardingFormData[keyof OnboardingFormData])} onNext={next} onBack={back} isTrial={isTrial} />
               )}
               {step === 4 && (
-                <StepAgreement data={form} onChange={(k, v) => update(k, v as boolean)} onNext={next} onBack={back} />
+                <StepAgreement data={form} onChange={(k, v) => update(k, v as boolean)} onNext={next} onBack={back} isTrial={isTrial} />
               )}
               {step === 5 && (
                 <StepPayment data={form} onSuccess={handlePaymentSuccess} onConfirm={handleConfirmBooking} onBack={back} isTrial={isTrial} />

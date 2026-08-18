@@ -63,6 +63,7 @@ type Campaign = {
   pricePerScreen: number; totalAmount: number; paymentId: string;
   status: 'upcoming' | 'active' | 'completed' | 'trial'; createdAt: string;
   trialOfferedAt: string | null; trialUsedAt: string | null;
+  preferredStores?: { id: string; storeName: string; locality: string | null }[];
 };
 
 // ─── Nav config ──────────────────────────────────────────────────────────────
@@ -800,7 +801,17 @@ function CampaignsPanel() {
                   <tr key={c.id} className="hover:bg-muted/20 transition-colors">
                     <td className="px-4 py-3 font-semibold text-foreground whitespace-nowrap">{c.brandName || '—'}</td>
                     <td className="px-4 py-3 text-muted-foreground"><p>{c.contactName}</p><p className="text-[10px] text-muted-foreground/60">{c.email}</p></td>
-                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{c.screens} × {c.months}mo</td>
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                      {c.screens} × {c.months}mo
+                      {(c.preferredStores?.length ?? 0) > 0 && (
+                        <p
+                          className="text-[10px] text-primary/80 mt-0.5 max-w-[160px] truncate"
+                          title={c.preferredStores!.map((s) => `${s.storeName}${s.locality ? ` (${s.locality})` : ''}`).join(', ')}
+                        >
+                          📍 {c.preferredStores!.map((s) => s.storeName).join(', ')}
+                        </p>
+                      )}
+                    </td>
                     <td className="px-4 py-3 font-semibold text-foreground whitespace-nowrap">{fmt(c.totalAmount ?? 0)}</td>
                     <td className="px-4 py-3">
                       <Badge variant={isPaid ? 'success' : isTrial ? 'info' : 'warning'} className="text-[10px] py-0.5 px-2 font-bold whitespace-nowrap">

@@ -222,6 +222,9 @@ model Campaign {
   phone          String?
   screens        Int      @default(1)
   months         Int      @default(1)
+  // Store ids the brand picked on the onboarding map — a routing hint for ops
+  // when assigning slots, not a hard reservation (slot inventory stays date+position).
+  preferredStoreIds String[] @default([])
   startDate      DateTime
   pricePerScreen Int
   totalAmount    Int

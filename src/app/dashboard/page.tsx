@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Drawer } from 'vaul';
+import { getScreenPrice, getListPrice } from '@/lib/brand-pricing';
 
 type Campaign = {
   id: string; name?: string; brandName?: string; contactName?: string | null;
@@ -872,9 +873,7 @@ type PendingForm = {
   gstin: string; screens: number; months: number; startDate: string;
 };
 
-function getScreenPrice(n: number) {
-  if (n >= 20) return 549; if (n >= 10) return 599; if (n >= 3) return 699; return 799;
-}
+// Pricing comes from the shared lib — no local price tables (see brand-pricing.ts).
 
 function loadRazorpay(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -1018,10 +1017,10 @@ type ModalFormData = {
 type ModalStep = 1 | 2 | 3;
 
 const SCREEN_TIERS_MODAL = [
-  { screens: 1,  pricePerScreen: 799 },
-  { screens: 3,  pricePerScreen: 699, popular: true },
-  { screens: 10, pricePerScreen: 599 },
-  { screens: 20, pricePerScreen: 549 },
+  { screens: 1,  pricePerScreen: getScreenPrice(1),  listPerScreen: getListPrice(1) },
+  { screens: 3,  pricePerScreen: getScreenPrice(3),  listPerScreen: getListPrice(3), popular: true },
+  { screens: 10, pricePerScreen: getScreenPrice(10), listPerScreen: getListPrice(10) },
+  { screens: 20, pricePerScreen: getScreenPrice(20), listPerScreen: getListPrice(20) },
 ] as const;
 
 const DURATION_OPTS = [
@@ -1266,8 +1265,9 @@ function NewCampaignModal({
                           {active && <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-primary" />}
                           <p className="text-xl font-black text-foreground">{t.screens}</p>
                           <p className="text-[10px] text-muted-foreground">{t.screens === 1 ? 'screen' : 'screens'}</p>
-                          <p className="text-xs font-bold text-foreground mt-1">{fmt(t.pricePerScreen)}</p>
-                          <p className="text-[10px] text-muted-foreground">per screen/mo</p>
+                          <p className="text-[10px] text-muted-foreground/50 line-through mt-1">{fmt(t.listPerScreen)}</p>
+                          <p className="text-xs font-bold text-foreground">{fmt(t.pricePerScreen)}</p>
+                          <p className="text-[10px] text-muted-foreground">per screen/mo · online</p>
                         </button>
                       );
                     })}

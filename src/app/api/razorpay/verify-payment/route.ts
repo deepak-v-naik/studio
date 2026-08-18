@@ -19,6 +19,7 @@ type Body = {
     pricePerScreen: number;
     totalAmount:    number;
     couponCode?:    string;
+    preferredStoreIds?: unknown; // store ids picked on the onboarding map
   };
 };
 
@@ -59,9 +60,17 @@ export async function POST(req: NextRequest) {
       const existing = await db.campaign.findFirst({ where: { orderId: razorpay_order_id } });
 
       if (existing) {
+        // Keep the row internally consistent: the charge was recomputed at
+        // current rates, so the stored per-screen rate must follow it.
+        const ppw = Math.floor(Number(campaign.pricePerScreen));
         await db.campaign.update({
           where: { id: existing.id },
-          data:  { paymentId: razorpay_payment_id, status: 'active', totalAmount: chargedRupees },
+          data:  {
+            paymentId: razorpay_payment_id,
+            status: 'active',
+            totalAmount: chargedRupees,
+            ...(Number.isFinite(ppw) && ppw > 0 ? { pricePerScreen: ppw } : {}),
+          },
         });
       } else {
         await db.campaign.create({
@@ -77,6 +86,11 @@ export async function POST(req: NextRequest) {
             pricePerScreen: campaign.pricePerScreen,
             totalAmount:    chargedRupees,
             couponCode:     campaign.couponCode ?? null,
+            preferredStoreIds: Array.isArray(campaign.preferredStoreIds)
+              ? campaign.preferredStoreIds
+                  .filter((v): v is string => typeof v === 'string' && /^[a-z0-9]{20,32}$/.test(v))
+                  .slice(0, 50)
+              : [],
             paymentId:      razorpay_payment_id,
             orderId:        razorpay_order_id,
             status:         'active',

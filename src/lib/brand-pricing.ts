@@ -7,13 +7,31 @@
 
 export const GST_RATE = 0.18;
 
-// Per-screen monthly price drops with volume. Keep in sync with the marketing
-// tiers shown on the onboarding page.
+// Per-screen monthly pricing, tiered by volume. Two columns per tier:
+//   list   — anchor price shown struck through (benchmarked against comparable
+//            Indian captive-audience screens, Aug 2026 pricing research)
+//   online — what self-serve bookings are actually charged
+// Both flow through this module only — the onboarding and dashboard UIs import
+// from here, no local price tables. Coupons stack on top of the online price.
+export const PRICE_TIERS = [
+  { minScreens: 20, list: 999,  online: 699 },
+  { minScreens: 10, list: 1099, online: 799 },
+  { minScreens: 3,  list: 1199, online: 899 },
+  { minScreens: 1,  list: 1299, online: 999 },
+] as const;
+
+/** Charged (online) per-screen monthly price for a given screen count. */
 export function getScreenPrice(screens: number): number {
-  if (screens >= 20) return 549;
-  if (screens >= 10) return 599;
-  if (screens >= 3)  return 699;
-  return 799;
+  const s = Math.max(1, Math.floor(screens || 1));
+  for (const t of PRICE_TIERS) if (s >= t.minScreens) return t.online;
+  return PRICE_TIERS[PRICE_TIERS.length - 1].online;
+}
+
+/** Anchor (list) per-screen monthly price for a given screen count. */
+export function getListPrice(screens: number): number {
+  const s = Math.max(1, Math.floor(screens || 1));
+  for (const t of PRICE_TIERS) if (s >= t.minScreens) return t.list;
+  return PRICE_TIERS[PRICE_TIERS.length - 1].list;
 }
 
 /** Base campaign cost before discounts/GST, in rupees. */
