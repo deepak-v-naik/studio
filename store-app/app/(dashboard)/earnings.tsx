@@ -6,7 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../../lib/colors';
 import { loadSession } from '../../lib/storage';
-import type { StoreSession } from '../../lib/api';
+import { authHeaders, type StoreSession } from '../../lib/api';
 import { API_BASE_URL } from '@shared/constants';
 
 type PaymentRecord = {
@@ -38,7 +38,7 @@ export default function Earnings() {
     loadSession().then(async (s) => {
       setStore(s);
       try {
-        const res = await fetch(`${API_BASE_URL}/api/stores/payments?storeId=${s?.id ?? ''}`);
+        const res = await fetch(`${API_BASE_URL}/api/stores/payments?storeId=${s?.id ?? ''}`, { headers: authHeaders(s?.token) });
         if (res.ok) setRecords(await res.json() as PaymentRecord[]);
       } catch { /* no records */ }
       setLoading(false);
@@ -80,7 +80,7 @@ export default function Earnings() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/payout-claim`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(store.token) },
         body: JSON.stringify({ storeId: store.id, month: claimModal.monthKey, amountPaise: claimModal.amountPaise }),
       });
       if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error); }

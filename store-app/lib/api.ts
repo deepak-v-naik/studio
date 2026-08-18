@@ -3,6 +3,15 @@ import type { StoreSession, RegisterPayload } from '@shared/store-types';
 
 export type { StoreSession, RegisterPayload };
 
+/**
+ * x-store-token header for authenticated store APIs. The server no longer
+ * trusts a bare storeId — every call that passes one must also send the
+ * signed token from the session (minted at login, refreshed by /api/stores/me).
+ */
+export function authHeaders(token?: string | null): Record<string, string> {
+  return token ? { 'x-store-token': token } : {};
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 20000);
@@ -63,9 +72,9 @@ export async function storeRegister(
   }
 }
 
-export async function getStoreMe(storeId?: string): Promise<StoreSession> {
+export async function getStoreMe(storeId?: string, token?: string | null): Promise<StoreSession> {
   const qs = storeId ? `?storeId=${storeId}` : '';
-  return request(`/api/stores/me${qs}`);
+  return request(`/api/stores/me${qs}`, { headers: authHeaders(token) });
 }
 
 export async function requestPasswordReset(phone: string): Promise<void> {
@@ -89,10 +98,12 @@ export async function verifyPasswordReset(
 export async function updateStoreMe(
   patch: Partial<StoreSession>,
   storeId?: string,
+  token?: string | null,
 ): Promise<void> {
   const qs = storeId ? `?storeId=${storeId}` : '';
   await request(`/api/stores/me${qs}`, {
     method: 'PATCH',
+    headers: authHeaders(token),
     body: JSON.stringify(patch),
   });
 }
@@ -104,6 +115,7 @@ export async function updateStoreMe(
  */
 export async function uploadVerificationPhoto(opts: {
   storeId: string;
+  token?: string | null;
   kind: 'shop' | 'install';
   fileUri: string;
   mimeType: string;
@@ -125,6 +137,7 @@ export async function uploadVerificationPhoto(opts: {
   try {
     const res  = await fetch(`${API_BASE_URL}/api/stores/verification-photo`, {
       method: 'POST', body: form, signal: controller.signal,
+      headers: authHeaders(opts.token), // no Content-Type — RN sets the multipart boundary
     });
     const body = await res.json().catch(() => ({})) as { ok?: boolean; url?: string; error?: string };
     if (!res.ok || !body.ok || !body.url) throw new Error(body.error ?? `HTTP ${res.status}`);

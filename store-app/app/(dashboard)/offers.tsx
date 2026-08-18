@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../../lib/colors';
+import { authHeaders } from '../../lib/api';
 import { loadSession } from '../../lib/storage';
 
 const BASE = 'https://wearealive.in';
@@ -23,6 +24,7 @@ const EMPTY_OFFER = { productName: '', weight: '', mrp: '', offerPrice: '', vali
 
 export default function Offers() {
   const [storeId, setStoreId] = useState<string | undefined>();
+  const [token, setToken] = useState<string | undefined>();
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(EMPTY_OFFER);
@@ -32,15 +34,16 @@ export default function Offers() {
   useEffect(() => {
     loadSession().then(async (s) => {
       setStoreId(s?.id);
-      await fetchOffers(s?.id);
+      setToken(s?.token);
+      await fetchOffers(s?.id, s?.token);
       setLoading(false);
     });
   }, []);
 
-  const fetchOffers = async (id?: string) => {
+  const fetchOffers = async (id?: string, tok?: string) => {
     try {
       const qs = id ? `?storeId=${id}` : '';
-      const res = await fetch(`${BASE}/api/stores/offers${qs}`);
+      const res = await fetch(`${BASE}/api/stores/offers${qs}`, { headers: authHeaders(tok) });
       if (res.ok) setOffers(await res.json() as Offer[]);
     } catch { /* ignore */ }
   };
@@ -52,7 +55,7 @@ export default function Offers() {
     try {
       const res = await fetch(`${BASE}/api/stores/offers`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
         body: JSON.stringify({
           storeId,
           productName: form.productName.trim(),
@@ -64,7 +67,7 @@ export default function Offers() {
       });
       if (res.ok) {
         setForm(EMPTY_OFFER);
-        await fetchOffers(storeId);
+        await fetchOffers(storeId, token);
       } else {
         const d = await res.json() as { error?: string };
         Alert.alert('Error', d.error ?? 'Could not save offer.');
@@ -83,7 +86,7 @@ export default function Offers() {
         text: 'Delete', style: 'destructive', onPress: async () => {
           setDeleting(id);
           try {
-            await fetch(`${BASE}/api/stores/offers/${id}?storeId=${storeId ?? ''}`, { method: 'DELETE' });
+            await fetch(`${BASE}/api/stores/offers/${id}?storeId=${storeId ?? ''}`, { method: 'DELETE', headers: authHeaders(token) });
             setOffers((prev) => prev.filter((o) => o.id !== id));
           } catch { /* ignore */ } finally { setDeleting(null); }
         },

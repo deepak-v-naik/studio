@@ -6,6 +6,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../../lib/colors';
+import { authHeaders } from '../../lib/api';
 import { loadSession } from '../../lib/storage';
 import { API_BASE_URL } from '@shared/constants';
 
@@ -28,6 +29,7 @@ const DOCS: { key: DocType; label: string; hint: string; icon: string }[] = [
 
 export default function KYC() {
   const [storeId, setStoreId] = useState<string | undefined>();
+  const [token, setToken] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<KycStatus>('not_started');
   const [rejectedReason, setRejectedReason] = useState<string | null>(null);
@@ -38,8 +40,9 @@ export default function KYC() {
   useEffect(() => {
     loadSession().then(async (s) => {
       setStoreId(s?.id);
+      setToken(s?.token);
       try {
-        const res = await fetch(`${API_BASE_URL}/api/stores/kyc?storeId=${s?.id ?? ''}`);
+        const res = await fetch(`${API_BASE_URL}/api/stores/kyc?storeId=${s?.id ?? ''}`, { headers: authHeaders(s?.token) });
         if (res.ok) {
           const d = await res.json() as KycData;
           setStatus(d.status);
@@ -77,7 +80,7 @@ export default function KYC() {
       const form = new FormData();
       form.append('storeId', storeId ?? '');
       form.append('file', { uri, name: `${doc}.jpg`, type: mimeType } as unknown as Blob);
-      const res = await fetch(`${API_BASE_URL}/api/stores/upload`, { method: 'POST', body: form });
+      const res = await fetch(`${API_BASE_URL}/api/stores/upload`, { method: 'POST', body: form, headers: authHeaders(token) });
       const d = await res.json() as { url?: string; error?: string };
       if (!res.ok || !d.url) throw new Error(d.error ?? 'Upload failed');
       setUploads((prev) => ({ ...prev, [doc]: d.url }));
@@ -93,7 +96,7 @@ export default function KYC() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/stores/kyc`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
         body: JSON.stringify({
           storeId,
           panUrl: uploads.pan,

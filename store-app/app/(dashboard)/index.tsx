@@ -110,7 +110,7 @@ function GpsPhotoRow({ kind, store, onUploaded }: {
         source = 'device';
       }
       const out = await uploadVerificationPhoto({
-        storeId: store.id ?? '', kind, fileUri: asset.uri,
+        storeId: store.id ?? '', token: store.token, kind, fileUri: asset.uri,
         mimeType: asset.mimeType ?? 'image/jpeg', lat: coords.lat, lng: coords.lng, source,
       });
       const now = new Date().toISOString();
@@ -158,7 +158,7 @@ export default function Overview() {
     loadSession().then(async (local) => {
       if (local) setStore(local);
       try {
-        const fresh = await getStoreMe(local?.id);
+        const fresh = await getStoreMe(local?.id, local?.token);
         setStore(fresh);
         await saveSession(fresh);
       } catch { /* use cached */ }

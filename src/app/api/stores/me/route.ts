@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { resolveStoreId } from '@/lib/store-partner-auth';
+import { mintStoreToken, resolveStoreId } from '@/lib/store-partner-auth';
 
 // Base columns guaranteed from init migration — no optional columns here
 type StoreRow = {
@@ -123,6 +123,9 @@ export async function GET(req: NextRequest) {
       // from User join
       email:        (s as unknown as { email?: string }).email ?? null,
       phone:        (s as unknown as { phone?: string }).phone ?? null,
+      // Fresh signed token — clients cache it with the session payload so
+      // explicit-storeId calls keep working without a next-auth cookie.
+      token:        mintStoreToken(s.id) ?? undefined,
     });
   } catch (e) {
     console.error('stores/me GET error', e);

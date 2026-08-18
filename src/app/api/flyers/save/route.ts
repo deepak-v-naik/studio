@@ -82,9 +82,9 @@ export async function GET() {
     const flyers  = (results as (Flyer | null)[]).filter((f): f is Flyer => f !== null);
 
     // Strip storeId: this endpoint is public (deals page + dashboards filter by
-    // storeName), and storeId doubles as the store partner's API bearer
-    // credential — leaking it here would let anyone write to that store's
-    // KYC/payout/verification-photo endpoints.
+    // storeName). Store ids are no longer API credentials (writes require a
+    // signed x-store-token — see resolveStoreId), but internal ids still don't
+    // belong in a public payload.
     return NextResponse.json(flyers.map(({ storeId: _storeId, ...pub }) => pub));
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message ?? 'Failed to fetch flyers' }, { status: 500 });

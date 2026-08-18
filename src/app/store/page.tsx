@@ -288,8 +288,13 @@ function RegistrationForm({ premium, premiumMonthly, premiumKey }: {
       }
 
       try {
-        const referralCode = (payload2 as { referralCode?: string }).referralCode ?? code;
+        const reg = payload2 as { referralCode?: string; storeId?: string; storeToken?: string };
+        const referralCode = reg.referralCode ?? code;
         localStorage.setItem('alive_store_session', JSON.stringify({
+          // id + signed token authorize store API calls before the first
+          // next-auth login (see resolveStoreId) — undefined keys are dropped
+          id:           reg.storeId,
+          token:        reg.storeToken,
           storeName:    form.storeName,
           ownerName:    form.ownerName,
           whatsapp:     form.whatsapp,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { Redis } from '@upstash/redis';
 import { db } from '@/lib/db';
+import { mintStoreToken } from '@/lib/store-partner-auth';
 
 function getRedis(): Redis | null {
   if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return null;
@@ -77,9 +78,13 @@ export async function POST(req: NextRequest) {
     }
 
     const s = rows[0];
+    // Signed token proves ownership of this storeId on later API calls —
+    // the mobile app persists it in SecureStore with the rest of the session.
+    const token = mintStoreToken(s.id);
     return NextResponse.json({
       store: {
         ...s,
+        ...(token ? { token } : {}),
         agreedAt:  s.agreedAt  instanceof Date ? s.agreedAt.toISOString()  : (s.agreedAt ?? null),
         createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : s.createdAt,
         updatedAt: s.updatedAt instanceof Date ? s.updatedAt.toISOString() : s.updatedAt,

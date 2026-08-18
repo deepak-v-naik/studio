@@ -6,6 +6,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../../lib/colors';
+import { authHeaders } from '../../lib/api';
 import { loadSession } from '../../lib/storage';
 
 const BASE = 'https://wearealive.in';
@@ -24,6 +25,7 @@ function resolveImage(raw: string): string {
 export default function Flyers() {
   const [storeName, setStoreName] = useState('');
   const [storeId, setStoreId] = useState<string | undefined>();
+  const [token, setToken] = useState<string | undefined>();
   const [flyers, setFlyers] = useState<Flyer[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -32,6 +34,7 @@ export default function Flyers() {
     loadSession().then(async (s) => {
       setStoreName(s?.storeName ?? '');
       setStoreId(s?.id);
+      setToken(s?.token);
       await fetchFlyers(s?.storeName ?? '');
       setLoading(false);
     });
@@ -66,7 +69,7 @@ export default function Flyers() {
     try {
       const res = await fetch(`${BASE}/api/flyers/save`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
         body: JSON.stringify({
           storeId,
           storeName,

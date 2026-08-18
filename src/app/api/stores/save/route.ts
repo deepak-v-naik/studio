@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { db } from '@/lib/db';
 import { notifyAdminWA, storeRegistrationMsg } from '@/lib/notify';
+import { mintStoreToken } from '@/lib/store-partner-auth';
 import { respond } from '@/lib/api-envelope';
 
 // ─── Redis (dual-write for admin panel backward compat during migration) ──────
@@ -262,7 +263,12 @@ export async function POST(req: NextRequest) {
       gstin:   body.gstin   ?? null,
     }));
 
-    const envelope = await respond({ success: true, referralCode: store.referralCode }, { route, request: { phone, storeName: body.storeName }, outcome: 'success', startedAtMs });
+    // storeId + signed token let the just-registered client call store APIs
+    // before its first next-auth login (web localStorage cache, mobile app).
+    const envelope = await respond(
+      { success: true, referralCode: store.referralCode, storeId: store.id, storeToken: mintStoreToken(store.id) ?? undefined },
+      { route, request: { phone, storeName: body.storeName }, outcome: 'success', startedAtMs },
+    );
     return NextResponse.json(envelope);
   } catch (e) {
     const msg = (e as Error).message ?? 'Failed to register store';

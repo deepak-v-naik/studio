@@ -33,6 +33,7 @@ const stagger = {
 
 type StoreInfo = {
   id?:           string;
+  token?:        string; // signed store API token — sent as x-store-token on explicit-storeId calls
   storeName:     string;
   ownerName:     string;
   whatsapp:      string;
@@ -465,7 +466,10 @@ function GpsPhotoUpload({ kind, store, onUploaded }: {
       fd.append('lng', String(coords.lng));
       fd.append('source', source);
       fd.append('storeId', store.id ?? '');
-      const res  = await fetch('/api/stores/verification-photo', { method: 'POST', body: fd });
+      const res  = await fetch('/api/stores/verification-photo', {
+        method: 'POST', body: fd,
+        headers: store.token ? { 'x-store-token': store.token } : undefined,
+      });
       const body = await res.json().catch(() => null) as { url?: string; error?: string } | null;
       if (!res.ok || !body?.url) { setError(body?.error ?? 'Upload failed. Please try again.'); return; }
       onUploaded(kind === 'shop'
@@ -564,11 +568,11 @@ function EmailBanner({ store, onSave }: { store: StoreInfo; onSave: (email: stri
     setBusy(true);
     setError(false);
     try {
-      // storeId keeps this working when no next-auth cookie exists yet
-      // (right after registration, or an admin impersonation session).
+      // storeId + signed token keep this working when no next-auth cookie
+      // exists yet (right after registration, or an admin impersonation session).
       const res = await fetch(`/api/stores/me?storeId=${encodeURIComponent(store.id ?? '')}`, {
         method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(store.token ? { 'x-store-token': store.token } : {}) },
         body:    JSON.stringify({ email }),
       });
       if (!res.ok) { setError(true); return; }
@@ -1068,7 +1072,7 @@ function OffersAndPayoutSettings({ store, onSaved }: { store: StoreInfo; onSaved
   const save = async () => {
     setBusy(true);
     try {
-      const res = await fetch(`/api/stores/me?storeId=${encodeURIComponent(store.id ?? '')}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payout) });
+      const res = await fetch(`/api/stores/me?storeId=${encodeURIComponent(store.id ?? '')}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(store.token ? { 'x-store-token': store.token } : {}) }, body: JSON.stringify(payout) });
       if (res.ok) onSaved(payout);
     } finally { setBusy(false); }
   };

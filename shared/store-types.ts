@@ -2,6 +2,9 @@
 
 export type StoreSession = {
   id?:              string;
+  // Signed store API token (x-store-token header) — proves the caller may act
+  // on this storeId; minted at login/registration and refreshed by /api/stores/me
+  token?:           string;
   storeName:        string;
   ownerName:        string;
   whatsapp:         string;

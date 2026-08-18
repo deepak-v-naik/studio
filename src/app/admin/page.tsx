@@ -352,8 +352,11 @@ const STAGE_COLORS: Record<string, string> = {
   rejected: 'bg-red-50 text-red-500',
 };
 
-function openAsPartner(s: StoreReg) {
-  const session = {
+async function openAsPartner(s: StoreReg) {
+  // Open the tab synchronously (inside the click gesture) so popup blockers
+  // don't eat it while we mint the impersonation token.
+  const win = window.open('about:blank', '_blank');
+  const session: Record<string, unknown> = {
     storeName: s.storeName, ownerName: s.ownerName,
     whatsapp: s.whatsapp, phone: s.phone || s.whatsapp,
     address: s.address, locality: s.locality, city: s.city, pincode: s.pincode,
@@ -365,8 +368,19 @@ function openAsPartner(s: StoreReg) {
     tier: s.tier || 'standard', monthlyCompensationPaise: s.monthlyCompensationPaise ?? 50000,
     id: s.id,
   };
+  // Store-partner APIs no longer trust a bare storeId — without this token the
+  // impersonated dashboard renders from the cached payload but can't write.
+  try {
+    const pw = sessionStorage.getItem(SS_PW) ?? '';
+    const res = await fetch(`/api/admin/store-token?storeId=${encodeURIComponent(s.id)}`, { headers: { 'admin-password': pw } });
+    if (res.ok) {
+      const d = await res.json() as { token?: string };
+      if (d.token) session.token = d.token;
+    }
+  } catch { /* dashboard still opens read-only from the cached payload */ }
   localStorage.setItem('alive_store_session', JSON.stringify(session));
-  window.open('/store-dashboard', '_blank');
+  if (win) win.location.href = '/store-dashboard';
+  else window.open('/store-dashboard', '_blank');
 }
 
 function PremiumLinkCard() {
@@ -628,7 +642,7 @@ function StoresPanel() {
                       )}
                       <button
                         type="button"
-                        onClick={() => openAsPartner(s)}
+                        onClick={() => void openAsPartner(s)}
                         className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
                       >
                         <ExternalLink className="h-3 w-3" /> View dashboard
