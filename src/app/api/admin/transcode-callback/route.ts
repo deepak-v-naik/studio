@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { pushPlanUpdated } from '@/lib/fcm';
 
 function transcodeGuard(req: NextRequest) {
   const secret = req.headers.get('x-transcode-secret') ?? '';
@@ -73,6 +74,15 @@ export async function POST(req: NextRequest) {
         WHERE id = ${body.contentId}
       `;
     }
+
+    // The rendition swap changed objectKey/md5, which changes every plan that
+    // includes this content — without a push, screens keep playing (or failing on)
+    // the original until their next 15-min poll. Empty target list = fleet-topic
+    // broadcast only (see pushCommand); resolving exactly which schedules embed
+    // this content through nested playlists isn't worth the precision at fleet
+    // scale, and unaffected players refetch, see an unchanged planHash, and no-op.
+    pushPlanUpdated([]).catch(() => {});
+
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

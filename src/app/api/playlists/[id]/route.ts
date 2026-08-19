@@ -96,12 +96,28 @@ export async function PATCH(
         },
       },
     });
-    // Push plan_updated to all devices scheduled via this playlist (best-effort, non-blocking)
+    // Push plan_updated to all devices scheduled via this playlist — including
+    // schedules that reach it through NESTING (best-effort, non-blocking). A child
+    // playlist is flattened into its parents at plan time, so editing it changes
+    // plans served for schedules that only reference a parent; matching on the
+    // edited id alone missed those entirely. Walk up the parent chain (max nesting
+    // depth 3, cycles rejected at write time) and match schedules on the whole set.
     if (items !== undefined || transition !== undefined) {
-      db.schedule.findMany({
-        where: { playlistId: id },
-        select: { deviceIds: true, groupName: true, storeIds: true, cityFilter: true },
-      }).then(async (schedules) => {
+      (async () => {
+        const affected = new Set<string>([id]);
+        let frontier = [id];
+        for (let depth = 0; depth < 3 && frontier.length > 0; depth++) {
+          const parents = await db.playlistItem.findMany({
+            where:  { childPlaylistId: { in: frontier } },
+            select: { playlistId: true },
+          });
+          frontier = parents.map((p) => p.playlistId).filter((p) => !affected.has(p));
+          frontier.forEach((p) => affected.add(p));
+        }
+        const schedules = await db.schedule.findMany({
+          where: { playlistId: { in: Array.from(affected) } },
+          select: { deviceIds: true, groupName: true, storeIds: true, cityFilter: true },
+        });
         const idSet = new Set<string>();
         for (const s of schedules) {
           const ids = await resolveScheduleDeviceIds({
@@ -110,10 +126,10 @@ export async function PATCH(
             storeIds:   (s as { storeIds?: string[] }).storeIds,
             cityFilter: (s as { cityFilter?: string | null }).cityFilter,
           });
-          for (const id of ids) idSet.add(id);
+          for (const did of ids) idSet.add(did);
         }
         return pushPlanUpdated(Array.from(idSet));
-      }).catch(() => {});
+      })().catch(() => {});
     }
 
     return NextResponse.json({ playlist: updated ? normalizePlaylist(updated) : null });

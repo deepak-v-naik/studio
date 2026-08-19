@@ -40,6 +40,14 @@ export async function PATCH(
       intervalMins?: number | null;
     };
 
+    // Retargeting must notify the screens the schedule is LEAVING too — they just
+    // lost this content and would otherwise keep playing it until their next poll.
+    // Captured before the update; unioned into the push below.
+    const before = await db.schedule.findUnique({
+      where:  { id },
+      select: { deviceIds: true, groupName: true, storeIds: true, cityFilter: true },
+    });
+
     const data: Record<string, unknown> = {};
     if (name         !== undefined) data.name         = name;
     if (playlistId   !== undefined) data.playlistId   = playlistId;
@@ -86,13 +94,18 @@ export async function PATCH(
       createdAt:    updated.createdAt.toISOString(),
     };
 
-    // Push plan_updated to affected devices (best-effort, non-blocking)
-    resolveScheduleDeviceIds({
-      deviceIds:  updated.deviceIds,
-      groupName:  updated.groupName,
-      storeIds:   (updated as { storeIds?: string[] }).storeIds,
-      cityFilter: (updated as { cityFilter?: string | null }).cityFilter,
-    }).then((ids) => pushPlanUpdated(ids)).catch(() => {});
+    // Push plan_updated to affected devices (best-effort, non-blocking) — union of
+    // the schedule's targets before AND after the update, so screens it left are
+    // told to drop the content as promptly as screens it now covers pick it up.
+    Promise.all([
+      resolveScheduleDeviceIds({
+        deviceIds:  updated.deviceIds,
+        groupName:  updated.groupName,
+        storeIds:   (updated as { storeIds?: string[] }).storeIds,
+        cityFilter: (updated as { cityFilter?: string | null }).cityFilter,
+      }),
+      before ? resolveScheduleDeviceIds(before) : Promise.resolve([]),
+    ]).then((sets) => pushPlanUpdated(Array.from(new Set(sets.flat())))).catch(() => {});
 
     return NextResponse.json({ schedule: norm });
   } catch (e) {
