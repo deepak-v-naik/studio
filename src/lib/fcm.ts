@@ -111,6 +111,13 @@ export async function resolveScheduleDeviceIds(schedule: {
   storeIds?: string[];
   cityFilter?: string | null;
 }): Promise<string[]> {
+  // A schedule with no targeting at all plays on every screen — same contract
+  // as the all-mode branches in /api/device/plan (schedules + overlays).
+  if (!schedule.deviceIds.length && !schedule.groupName && !schedule.storeIds?.length && !schedule.cityFilter) {
+    const rows = await db.device.findMany({ select: { id: true } });
+    return rows.map((r) => r.id);
+  }
+
   const ids = new Set<string>(schedule.deviceIds);
 
   if (schedule.groupName) {
