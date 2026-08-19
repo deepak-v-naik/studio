@@ -8,13 +8,18 @@ import {
 } from 'lucide-react';
 import {
   getSchedules, getPlaylists, getDevices, getDeviceGroups, searchStores,
-  createSchedule, updateSchedule, deleteSchedule,
+  createSchedule, updateSchedule, deleteSchedule, getScheduleConflicts,
   type Schedule, type Playlist, type Device, type DeviceGroup, type StoreSearchResult,
+  type ScheduleConflict,
 } from '@/lib/backend-api';
 import { toast } from '@/hooks/use-toast';
 import ScheduleCalendar from './schedule-calendar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from '@/components/ui/alert-dialog';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -216,6 +221,12 @@ export default function SchedulesTab() {
 
   const [form, setForm] = useState({ ...BLANK_FORM, startAt: '', endAt: '' });
 
+  // Replace-confirmation dialog: schedules already covering the targeted screens
+  // in the new window, plus the payload held while the admin decides. Dialog is
+  // open whenever pendingPayload is set.
+  const [conflicts, setConflicts] = useState<ScheduleConflict[]>([]);
+  const [pendingPayload, setPendingPayload] = useState<Parameters<typeof createSchedule>[0] | null>(null);
+
   useEffect(() => {
     Promise.all([getSchedules(), getPlaylists(), getDevices(), getDeviceGroups(), searchStores()])
       .then(([s, p, r, g, sr]) => {
@@ -370,17 +381,72 @@ export default function SchedulesTab() {
         const updated = await updateSchedule(editId, payload);
         setSchedules((s) => s.map((x) => x.id === editId ? updated : x));
         toast({ title: 'Schedule updated ✓', description: 'Changes will reach screens at next poll.' });
+        setForm({ ...BLANK_FORM, startAt: nowLocal(), endAt: localPlusDays(7) });
+        setSelectedStores([]);
+        closeForm();
       } else {
-        const created = await createSchedule(payload);
-        setSchedules((s) => [created, ...s]);
-        toast({ title: 'Schedule created ✓', description: 'Content will start playing as scheduled.' });
+        // A screen plays one playlist at a time — if other schedules already
+        // cover any targeted screen in this window, ask before silently
+        // stacking a second playlist on top of the old one.
+        let found: ScheduleConflict[];
+        try {
+          found = await getScheduleConflicts({
+            deviceIds:  payload.deviceIds,
+            groupName:  payload.groupName,
+            storeIds:   payload.storeIds,
+            cityFilter: payload.cityFilter,
+            startAt, endAt,
+          });
+        } catch (err) {
+          // Distinguish from a failed create: nothing was saved yet.
+          throw new Error(`Couldn't check for existing schedules — nothing was saved. ${(err as Error).message}`);
+        }
+        if (found.length > 0) {
+          setConflicts(found);
+          setPendingPayload(payload);
+          return; // dialog takes over: replace / keep both / cancel
+        }
+        await doCreate(payload);
       }
-
-      setForm({ ...BLANK_FORM, startAt: nowLocal(), endAt: localPlusDays(7) });
-      setSelectedStores([]);
-      closeForm();
     } catch (e) {
       toast({ variant: 'destructive', title: 'Save failed', description: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Shared create path for the no-conflict save and both dialog choices.
+  // replaceIds deletes those schedules in the same server transaction.
+  const doCreate = async (payload: Parameters<typeof createSchedule>[0], replaceIds?: string[]) => {
+    const created = await createSchedule(
+      replaceIds?.length ? { ...payload, replaceScheduleIds: replaceIds } : payload,
+    );
+    setSchedules((s) => [created, ...(replaceIds?.length ? s.filter((x) => !replaceIds.includes(x.id)) : s)]);
+    toast(replaceIds?.length
+      ? { title: 'Playlist replaced ✓', description: `Deleted ${replaceIds.length} old schedule${replaceIds.length !== 1 ? 's' : ''} — screens switch at next poll.` }
+      : { title: 'Schedule created ✓', description: 'Content will start playing as scheduled.' });
+    setForm({ ...BLANK_FORM, startAt: nowLocal(), endAt: localPlusDays(7) });
+    setSelectedStores([]);
+    closeForm();
+  };
+
+  const closeConflictDialog = () => {
+    setPendingPayload(null);
+    setConflicts([]);
+  };
+
+  // Both choices capture state before clearing it: Radix closes the dialog on
+  // action click, and onOpenChange would wipe pendingPayload mid-flight.
+  const resolveConflicts = async (replace: boolean) => {
+    const payload = pendingPayload;
+    if (!payload) return;
+    const ids = conflicts.map((c) => c.id);
+    closeConflictDialog();
+    setSaving(true);
+    try {
+      await doCreate(payload, replace ? ids : undefined);
+    } catch (e) {
+      toast({ variant: 'destructive', title: replace ? 'Replace failed' : 'Save failed', description: (e as Error).message });
     } finally {
       setSaving(false);
     }
@@ -1003,6 +1069,67 @@ export default function SchedulesTab() {
           </table>
         </div>
       )}
+
+      {/* Replace-old-playlist confirmation */}
+      <AlertDialog open={pendingPayload !== null} onOpenChange={(o) => { if (!o) closeConflictDialog(); }}>
+        <AlertDialogContent className="max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace the current playlist on these screens?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {conflicts.length === 1
+                ? 'A schedule is already playing on screens you selected during this period.'
+                : `${conflicts.length} schedules are already playing on screens you selected during this period.`}
+              {' '}Deleting {conflicts.length === 1 ? 'it' : 'them'} switches those screens to the new playlist at their next poll.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="max-h-56 space-y-2 overflow-y-auto">
+            {conflicts.map((c) => (
+              <div key={c.id} className="rounded-xl border border-border bg-muted/30 px-3.5 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-foreground truncate">{c.name}</p>
+                  <Badge variant="secondary" className="shrink-0 text-[10px]">{c.playlistName}</Badge>
+                </div>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  {fmtDateTime(c.startAt)} → {c.endAt > '2090-01-01' ? 'indefinite' : fmtDateTime(c.endAt)}
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  <Monitor className="mr-1 inline h-3 w-3 align-[-1px]" />
+                  {c.overlapDeviceNames.join(', ')}{c.overlapCount > c.overlapDeviceNames.length ? ` +${c.overlapCount - c.overlapDeviceNames.length} more` : ''}
+                </p>
+                {c.extraCount > 0 && (
+                  <p className="mt-1 flex items-start gap-1 text-[11px] font-medium text-amber-600">
+                    <AlertCircle className="mt-[1px] h-3 w-3 shrink-0" />
+                    Also plays on {c.extraCount} other screen{c.extraCount !== 1 ? 's' : ''} — deleting it leaves {c.extraCount !== 1 ? 'them' : 'that screen'} without this content.
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            &ldquo;Keep both&rdquo; leaves the old schedule{conflicts.length !== 1 ? 's' : ''} in place — overlapping
+            screens play whichever schedule has the higher priority (this new one: P{pendingPayload?.priority ?? 0}).
+          </p>
+
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <button
+              type="button"
+              onClick={() => resolveConflicts(false)}
+              className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted transition-colors"
+            >
+              Keep both
+            </button>
+            <AlertDialogAction
+              onClick={() => resolveConflicts(true)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete old & replace
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

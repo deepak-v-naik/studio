@@ -276,11 +276,20 @@ export async function GET(req: NextRequest) {
     if (!slotMode || items.length === 0) {
       // ── Schedule mode (and the fallback when the slot loop is empty) ───────────
       // Find all schedules active in the next 72-hr window for this device, group, store, or city.
-      const scheduleOrConditions = [
+      const scheduleOrConditions: Record<string, unknown>[] = [
         { deviceIds: { has: device.id } },
         ...(device.groupName       ? [{ groupName:  device.groupName }]              : []),
         ...(device.storeId         ? [{ storeIds:   { has: device.storeId } }]       : []),
         ...(deviceWithStore?.city  ? [{ cityFilter:  deviceWithStore.city }]          : []),
+        // "all screens" schedules — none of the targeting fields set. Same
+        // contract as the overlay query below; without this branch the
+        // Schedules tab's "All screens" target mode never matched any device.
+        { AND: [
+            { deviceIds:  { isEmpty: true } },
+            { groupName:  null },
+            { storeIds:   { isEmpty: true } },
+            { cityFilter: null },
+        ] },
       ];
       const schedules = await db.schedule.findMany({
         where: {
