@@ -81,6 +81,8 @@ async function storeIncidents(deviceId: string, correlationId: string, incidents
   return stored;
 }
 
+const TEN_YEARS_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
 /** Maps a telemetry payload onto Device columns. Shared by the telemetry-only and
  *  events+telemetry paths so the two can't drift. */
 function telemetryToDeviceData(t: TelemetryInput) {
@@ -88,6 +90,16 @@ function telemetryToDeviceData(t: TelemetryInput) {
     ? new Date(t.playbackAliveMs) : null;
   const stallAt = typeof t.lastStallMs === 'number' && t.lastStallMs > 0
     ? new Date(t.lastStallMs) : null;
+  // uptimeMs is time-since-boot on the device; store the derived boot instant instead,
+  // because an uptime is stale the moment it is written while a boot instant stays true.
+  // Recomputed on every heartbeat, so it drifts by network latency — treat only a shift
+  // of minutes as a genuine reboot, not a few seconds. Bounded to a sane range so a
+  // garbage reading can't write an absurd timestamp.
+  const bootedAt = typeof t.uptimeMs === 'number'
+    && Number.isFinite(t.uptimeMs)
+    && t.uptimeMs >= 0
+    && t.uptimeMs < TEN_YEARS_MS
+    ? new Date(Date.now() - t.uptimeMs) : null;
   return {
     ...(typeof t.cpuTempC      === 'number' ? { cpuTempC: t.cpuTempC, cpuTempUpdatedAt: new Date() } : {}),
     ...(typeof t.freeStorageMb === 'number' ? { freeStorageMb: t.freeStorageMb } : {}),
@@ -96,6 +108,7 @@ function telemetryToDeviceData(t: TelemetryInput) {
     ...(aliveAt           ? { playbackAliveAt: aliveAt           } : {}),
     ...(t.lastStallReason ? { lastStallReason: t.lastStallReason } : {}),
     ...(stallAt           ? { lastStallAt:     stallAt           } : {}),
+    ...(bootedAt          ? { bootedAt:        bootedAt          } : {}),
   };
 }
 

@@ -34,10 +34,10 @@ export async function GET(
     if (!device) return NextResponse.json({ error: 'Device not found' }, { status: 404 });
 
     // Optional telemetry columns — may not exist on older DBs
-    let telemetry: { cpuTempC: number | null; cpuTempUpdatedAt: string | null; freeStorageMb: number | null; androidVersion: string | null; appVersion: string | null } | null = null;
+    let telemetry: { cpuTempC: number | null; cpuTempUpdatedAt: string | null; freeStorageMb: number | null; androidVersion: string | null; appVersion: string | null; bootedAt: string | null; uptimeMs: number | null } | null = null;
     try {
-      const t = await db.$queryRaw<{ cpuTempC: number | null; cpuTempUpdatedAt: Date | null; freeStorageMb: number | null; androidVersion: string | null; appVersion: string | null }[]>`
-        SELECT "cpuTempC", "cpuTempUpdatedAt", "freeStorageMb", "androidVersion", "appVersion"
+      const t = await db.$queryRaw<{ cpuTempC: number | null; cpuTempUpdatedAt: Date | null; freeStorageMb: number | null; androidVersion: string | null; appVersion: string | null; bootedAt: Date | null }[]>`
+        SELECT "cpuTempC", "cpuTempUpdatedAt", "freeStorageMb", "androidVersion", "appVersion", "bootedAt"
         FROM "Device" WHERE "id" = ${id} LIMIT 1
       `;
       const r = t[0];
@@ -47,6 +47,9 @@ export async function GET(
         freeStorageMb:    r.freeStorageMb,
         androidVersion:   r.androidVersion,
         appVersion:       r.appVersion,
+        bootedAt:         r.bootedAt instanceof Date ? r.bootedAt.toISOString() : null,
+        // Uptime as of NOW, derived per request rather than stored — see Device.bootedAt.
+        uptimeMs:         r.bootedAt instanceof Date ? Date.now() - r.bootedAt.getTime() : null,
       };
     } catch { /* columns not yet migrated */ }
 
@@ -190,6 +193,25 @@ export async function GET(
         issues.push({ level: 'warn', message: `Last heartbeat was ${minsAgo} minutes ago. Device may be offline or not polling.` });
       } else {
         issues.push({ level: 'ok', message: `Device polled ${minsAgo} minute(s) ago — connection looks healthy.` });
+      }
+    }
+
+    // Power-cut vs app-exit, after the fact. Plays and heartbeats stop together in both
+    // cases, so the only way to tell them apart used to be a site visit. A recent boot
+    // means the device lost power (or was restarted); a long uptime across a known
+    // outage means it stayed powered and something else broke — the app exited, or the
+    // network dropped.
+    if (telemetry?.uptimeMs != null) {
+      const upMins  = Math.floor(telemetry.uptimeMs / 60000);
+      const upHours = Math.floor(upMins / 60);
+      const upDays  = Math.floor(upHours / 24);
+      const pretty  = upDays > 0 ? `${upDays}d ${upHours % 24}h`
+                    : upHours > 0 ? `${upHours}h ${upMins % 60}m`
+                    : `${upMins}m`;
+      if (upMins < 15) {
+        issues.push({ level: 'warn', message: `Device booted ${pretty} ago — it lost power or was restarted recently. A screen that went dark without a reboot points at the app or the network instead.` });
+      } else {
+        issues.push({ level: 'ok', message: `Powered on for ${pretty} (booted ${new Date(telemetry.bootedAt!).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST) — no reboot in that window, so any outage inside it was not a power cut.` });
       }
     }
 

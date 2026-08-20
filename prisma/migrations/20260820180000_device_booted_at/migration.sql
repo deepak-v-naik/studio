@@ -1,0 +1,12 @@
+-- Outage forensics: derived boot instant, written from the uptimeMs the player reports
+-- with each heartbeat (see Device.bootedAt and /api/device/events).
+--
+-- Distinguishes a power cut from an app exit or a network drop after the fact: when a
+-- screen goes dark, plays and heartbeats stop together in every case, so the server
+-- cannot otherwise tell them apart without someone visiting the site. bootedAt only
+-- moves forward if the device actually rebooted.
+--
+-- IF NOT EXISTS matches the convention of the surrounding migrations: these are applied
+-- by `prisma migrate deploy` during the Vercel build, and re-running one against a
+-- database where the column was already added by hand must not fail the deploy.
+ALTER TABLE "Device" ADD COLUMN IF NOT EXISTS "bootedAt" TIMESTAMP(3);
