@@ -36,6 +36,7 @@ const AutoFlyerPanel   = dynamic(() => import('@/components/admin/auto-flyer-pan
 const AppPreviewCard   = dynamic(() => import('@/components/admin/app-preview-card'),   { ssr: false });
 const CouponsTab       = dynamic(() => import('@/components/admin/coupons-tab'),         { ssr: false });
 import { Logo } from '@/components/icons/logo';
+import OfflineAlertWatcher from '@/components/admin/offline-alert-watcher';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1437,6 +1438,10 @@ function Dashboard() {
   const [adminPw,     setAdminPw]     = useState('');
   const [liveCount,   setLiveCount]   = useState(0);
   const [alertCount,  setAlertCount]  = useState(0);
+  // Device-offline alerts are server-side now (DeviceAlert rows). They're kept
+  // separate from the derived count below so the two can't double-count the
+  // same offline screen.
+  const [offlineAlertCount, setOfflineAlertCount] = useState(0);
   const [tickerStats, setTickerStats] = useState<OpsStats | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -1468,7 +1473,7 @@ function Dashboard() {
       const cms  = Array.isArray(cmR) ? cmR : [] as { paymentId?: string; status?: string }[];
       const sts  = Array.isArray(stR) ? stR : (stR?.data ?? []) as { id: string; createdAt: string; onboardingStage?: string }[];
       let count = 0;
-      devs.forEach((d) => { if (d.status === 'OFFLINE' && !dismissed.includes(`device-offline-${d.id}`)) count++; });
+      // Offline screens are counted by OfflineAlertWatcher from /api/admin/alerts.
       const pendingDevs = devs.filter((d) => d.status === 'PENDING');
       if (pendingDevs.length > 0 && !dismissed.includes('devices-pending')) count++;
       const pendingCms = cms.filter((c) => (c as { paymentId?: string }).paymentId === 'pending' || (c as { status?: string }).status === 'upcoming');
@@ -1517,6 +1522,9 @@ function Dashboard() {
   }, []);
 
   const handleNav = (t: Tab) => { setTab(t); setSidebarOpen(false); };
+  // Stable identity so OfflineAlertWatcher's effect doesn't re-subscribe (and
+  // re-prime, losing its seen-set) on every render of this shell.
+  const openAlertsTab = useCallback(() => { setTab('alerts'); setSidebarOpen(false); }, []);
   const signOut = () => {
     sessionStorage.removeItem('alive_admin');
     sessionStorage.removeItem(SS_PW);
@@ -1548,6 +1556,11 @@ function Dashboard() {
 
   return (
     <div className="adm app" ref={containerRef} data-theme={theme}>
+      {/* Pops a toast the moment a screen drops, and keeps the bell count live */}
+      <OfflineAlertWatcher
+        onUnreadChange={setOfflineAlertCount}
+        onOpenAlerts={openAlertsTab}
+      />
       <SidebarNav tab={tab} onTab={handleNav} onSignOut={signOut} liveCount={liveCount} />
 
       <main className="main">
@@ -1558,7 +1571,7 @@ function Dashboard() {
           onOpenNotif={() => handleNav('alerts')}
           theme={theme}
           setTheme={setTheme}
-          unread={alertCount}
+          unread={alertCount + offlineAlertCount}
         />
         <Ticker stats={tickerStats} />
 

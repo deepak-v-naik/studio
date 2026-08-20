@@ -7,7 +7,10 @@
 // Bumped v1 -> v2 deliberately. The activate handler deletes every cache whose name
 // isn't CACHE, so changing this name purges the stale Next.js bundles that were
 // causing ChunkLoadError on already-affected browsers — they self-heal on next load.
-const CACHE     = 'alive-partner-v2';
+// v2 -> v3: adds the push / notificationclick handlers below. The activate
+// handler deletes every cache whose name isn't CACHE, so bumping this is what
+// makes already-installed workers pick up the new script.
+const CACHE     = 'alive-partner-v3';
 const PRECACHE  = [
   '/store-dashboard',
   '/store',
@@ -140,3 +143,41 @@ async function navigationHandler(req) {
     });
   }
 }
+
+// ── Push: screen-offline alerts ──────────────────────────────────────────────
+// Payload is the JSON sent by src/lib/web-push.ts:
+//   { title, body, url?, tag? }
+// `tag` is the alert id, so the "back online" notification replaces the
+// "offline" one in the tray instead of stacking a second, contradictory alert.
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { /* malformed payload */ }
+
+  const title = data.title || 'ALIVE';
+  const options = {
+    body: data.body || '',
+    // Matches src/app/manifest.ts. NOTE: public/icons/ currently holds only a
+    // README — until those PNGs are generated the browser falls back to its
+    // default icon (the notification still shows).
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: data.tag || 'alive-alert',
+    renotify: true,
+    data: { url: data.url || '/store-dashboard' },
+  };
+  // waitUntil keeps the worker alive until the notification is actually shown.
+  e.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || '/store-dashboard';
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    // Reuse an already-open dashboard tab rather than piling up new ones.
+    for (const client of all) {
+      if (client.url.includes(target) && 'focus' in client) return client.focus();
+    }
+    if (self.clients.openWindow) return self.clients.openWindow(target);
+  })());
+});

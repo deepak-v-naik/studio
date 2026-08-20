@@ -16,6 +16,7 @@ import VoiceBillTab from '@/components/store/voice-bill-tab';
 import OffersTab from '@/components/store/offers-tab';
 import FlyerTab from '@/components/store/flyer-tab';
 import KycTab from '@/components/store/kyc-tab';
+import ScreenAlertBanner from '@/components/store/screen-alert-banner';
 import { PwaInstallBanner } from '@/components/pwa-register';
 
 // ─── Animations ─────────────────────────────────────────────────────────────
@@ -1215,6 +1216,7 @@ function MainDashboard({ store, onLogout }: { store: StoreInfo; onLogout: () => 
         </motion.div>
 
         {/* Email banner */}
+        <ScreenAlertBanner storeId={storeData.id} token={storeData.token} />
         {!storeData.email && <EmailBanner store={storeData} onSave={saveEmail} />}
 
         {/* Tabs */}

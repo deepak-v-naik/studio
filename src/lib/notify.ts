@@ -78,6 +78,51 @@ export function payoutClaimMsg(store: {
   ].join('\n');
 }
 
+function sinceText(d: Date | null): string {
+  if (!d) return 'unknown';
+  const mins = Math.max(1, Math.round((Date.now() - d.getTime()) / 60000));
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 24 ? `${hrs} hour${hrs > 1 ? 's' : ''} ago` : `${Math.round(hrs / 24)} day(s) ago`;
+}
+
+export function deviceOfflineAdminMsg(d: {
+  deviceName: string; storeName: string | null; lastSeen: Date | null;
+}) {
+  return [
+    `🔴 *Screen Offline*`,
+    `Store: ${d.storeName ?? 'Unassigned'}`,
+    `Screen: ${d.deviceName}`,
+    `Last seen: ${sinceText(d.lastSeen)}`,
+    ``,
+    `https://wearealive.in/admin`,
+  ].join('\n');
+}
+
+// Partner-facing: no admin link, no jargon, and it always ends in the ONE
+// action a shopkeeper can actually take.
+export function deviceOfflinePartnerMsg(d: { storeName: string; since: Date | null }) {
+  return [
+    `📺 *Your ALIVE screen has stopped*`,
+    `${d.storeName}`,
+    `Last playing: ${sinceText(d.since)}`,
+    ``,
+    `Please check that the screen is switched on and your Wi-Fi is working.`,
+    `Ads don't run while it's off — it goes back to normal on its own once it reconnects.`,
+    ``,
+    `Need help? WhatsApp us on +91 74113 24448.`,
+  ].join('\n');
+}
+
+export function deviceBackOnlineMsg(storeName: string) {
+  return [
+    `✅ *Your ALIVE screen is back online*`,
+    `${storeName}`,
+    ``,
+    `Ads are playing again — nothing further needed. Thank you!`,
+  ].join('\n');
+}
+
 export function billClaimedMsg(storeName: string, customerName: string, customerPhone: string, billRef: string) {
   return [
     `🧾 *Bill Claimed*`,

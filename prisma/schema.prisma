@@ -164,6 +164,7 @@ model Store {
   footfallHourly       FootfallHourly[]
   screenPresenceEvents ScreenPresenceEvent[]
   sensorHealth         StoreSensorHealth?
+  pushSubscriptions    PushSubscription[]
 
   @@index([city])
   @@index([pincode])
@@ -323,16 +324,92 @@ model Device {
   playbackAliveAt  DateTime?
   lastStallReason  String?
   lastStallAt      DateTime?
+  // Outage forensics. The player reports time-since-boot with each heartbeat and this
+  // stores the derived boot instant, because a stored uptime would be stale the moment
+  // it arrived while a boot instant stays true. When a screen goes dark, plays and
+  // heartbeats stop together whether the power was cut, the network dropped or the app
+  // was force-stopped; comparing bootedAt across the gap tells them apart without a site
+  // visit — it moves forward only if the device actually rebooted.
+  bootedAt         DateTime?
   updatedAt        DateTime          @updatedAt
 
   store              Store?              @relation(fields: [storeId], references: [id], onDelete: SetNull)
   events             PlayEvent[]
   telemetryEvents    TelemetryEvent[]
   remediationTickets RemediationTicket[]
+  alerts             DeviceAlert[]
 
   @@index([storeId])
   @@index([groupName])
   @@index([status])
+  // The offline sweep filters on (status, lastSeen); without this the cron does a
+  // full table scan of the fleet every 5 minutes.
+  @@index([status, lastSeen])
+}
+
+// ─── Screen offline alerts ───────────────────────────────────────────────────
+// One row per offline INCIDENT (not per cron run): opened when a screen crosses
+// the offline threshold, resolved when it heartbeats again. Admin is notified at
+// the edge; the partner only after the outage is sustained (see lib/device-alerts).
+//
+// Deliberately NOT modelled on RemediationTicket: nothing in the codebase ever
+// resolves those, so its "skip if an OPEN one exists" gate silences a device
+// permanently. Here resolution is driven by the device itself coming back.
+
+enum DeviceAlertStatus {
+  OPEN
+  RESOLVED
+}
+
+model DeviceAlert {
+  id       String            @id @default(cuid())
+  deviceId String
+  storeId  String? // null for warehouse/unassigned screens — no partner to notify
+  type     String            @default("OFFLINE")
+  severity String            @default("warning") // warning | critical (escalates with downtime)
+  status   DeviceAlertStatus @default(OPEN)
+
+  // Snapshot of the names at incident time so the alert still reads correctly
+  // after a screen is renamed, unlinked, or deleted.
+  deviceName String
+  storeName  String?
+
+  lastSeenAt  DateTime? // last heartbeat before the screen dropped
+  startedAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+  downtimeSec Int? // filled in on resolution, for reporting
+
+  adminReadAt       DateTime? // admin dismissed/saw it in the panel
+  partnerNotifiedAt DateTime? // partner push/WhatsApp actually attempted
+  partnerReadAt     DateTime?
+
+  createdAt DateTime @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([storeId, status, createdAt])
+  @@index([deviceId, status])
+}
+
+// ─── Partner web-push subscriptions ──────────────────────────────────────────
+// Browser Push API subscriptions for the partner PWA. Store partners have no
+// email (User.email is null for every phone-registered partner), so push is the
+// only channel that reaches them without a WhatsApp template.
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  storeId   String
+  endpoint  String   @unique // the push service URL — the natural identity of a subscription
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  lastOkAt  DateTime? // last successful delivery; stale ones get pruned on 404/410
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
 }
 
 enum RemediationTicketStatus {

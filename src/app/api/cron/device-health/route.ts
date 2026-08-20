@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { notifyAdminWA } from '@/lib/notify';
+import { openOfflineAlerts, escalateSustainedOutages } from '@/lib/device-alerts';
 import { recordError, hashStack, getOrCreateCorrelationId } from '@/lib/telemetry';
 
 const UPTIME_DROP_THRESHOLD_PCT = 15;
@@ -41,14 +42,37 @@ export async function GET(req: NextRequest) {
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   try {
-    // 1. Mark devices that haven't been seen in 10+ minutes as OFFLINE
-    const { count: markedOffline } = await db.device.updateMany({
+    // 1. Mark devices that haven't been seen in 20+ minutes as OFFLINE.
+    // updateManyAndReturn (one UPDATE ... RETURNING) so the set of devices that
+    // crossed the edge is captured atomically with the flip — a plain updateMany
+    // returns only a count, and re-deriving the set afterwards would either miss
+    // devices or re-notify every still-offline screen on every 5-minute run.
+    const justWentOffline = await db.device.updateManyAndReturn({
       where: {
         status:  { not: 'OFFLINE' },
         lastSeen: { lt: offlineThresh },
       },
       data: { status: 'OFFLINE' },
+      select: { id: true, name: true, storeId: true, lastSeen: true },
     });
+    const markedOffline = justWentOffline.length;
+
+    // Alerting is best-effort and must never fail the health sweep.
+    const storeNames = new Map<string, string>();
+    const storeIds = justWentOffline.map((d) => d.storeId).filter((s): s is string => !!s);
+    if (storeIds.length) {
+      const stores = await db.store.findMany({
+        where: { id: { in: storeIds } }, select: { id: true, storeName: true },
+      }).catch(() => []);
+      for (const s of stores) storeNames.set(s.id, s.storeName);
+    }
+    const openedAlerts = await openOfflineAlerts(justWentOffline.map((d) => ({
+      ...d,
+      store: d.storeId ? { storeName: storeNames.get(d.storeId) ?? '' } : null,
+    })));
+
+    // Partners are told only once an outage is sustained — see lib/device-alerts.
+    const partnersNotified = await escalateSustainedOutages(now);
 
     // 2. Recalculate rolling 30-day uptime for all non-PENDING devices
     const devices = await db.device.findMany({
@@ -157,7 +181,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ ok: true, markedOffline, updatedUptime: devices.length, createdTickets });
+    return NextResponse.json({
+      ok: true, markedOffline, updatedUptime: devices.length, createdTickets,
+      openedAlerts, partnersNotified,
+    });
   } catch (e) {
     const error = e as Error;
     const correlationId = getOrCreateCorrelationId(null);

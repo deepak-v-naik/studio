@@ -8,7 +8,7 @@
 // Schedule priority enforcement: when two schedules overlap in time, the higher-priority
 // schedule wins for the overlapping window. resolveConflicts() implements this logic.
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { db } from '@/lib/db';
 import { publicUrl } from '@/lib/r2';
 import crypto from 'crypto';
@@ -16,6 +16,7 @@ import { getOrCreateCorrelationId, hashStack, recordError } from '@/lib/telemetr
 import { resolvePlaylistTree, type PlanMediaItem, type PlanNestedNode } from '@/lib/playlist-nesting';
 import { istToday, isOpenOn, buildSlotLoop, SLOT_DURATION_MS } from '@/lib/slots';
 import { resolveFillerCampaign } from '@/lib/slots-db';
+import { resolveOfflineAlerts } from '@/lib/device-alerts';
 
 async function authenticate(req: NextRequest) {
   const auth  = req.headers.get('authorization') ?? '';
@@ -442,6 +443,18 @@ export async function GET(req: NextRequest) {
       where: { id: device.id },
       data:  { lastSeen: now, status: 'ONLINE' },
     });
+
+    // `device` is the row as it was BEFORE that write, so this is the recovery
+    // edge: a screen that was OFFLINE just came back. Close its alert (and tell
+    // the partner, if they were told it broke).
+    //
+    // after() rather than a bare `void`: this is the ONLY code path that ever
+    // sets an alert RESOLVED, and Vercel suspends the instance once the response
+    // is flushed. A dropped promise would strand the alert OPEN forever — which
+    // both leaves a false "screen has stopped" banner on the partner's dashboard
+    // and permanently silences that device (openOfflineAlerts skips devices with
+    // an OPEN alert). after() keeps the work alive past the response.
+    if (device.status === 'OFFLINE') after(() => resolveOfflineAlerts(device.id, now));
 
     return NextResponse.json({
       planHash,

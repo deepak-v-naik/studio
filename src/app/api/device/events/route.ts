@@ -7,12 +7,13 @@
 // Body: { events: PlayEventInput[] }
 // Returns: { accepted: number }
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { db } from '@/lib/db';
 import { verifyDeviceToken } from '@/lib/device-auth';
 import crypto from 'crypto';
 import { getOrCreateCorrelationId, hashStack, recordError } from '@/lib/telemetry';
 import { respond } from '@/lib/api-envelope';
+import { resolveOfflineAlerts } from '@/lib/device-alerts';
 
 type PlayEventInput = {
   id:          string;   // client-generated UUID for dedup
@@ -38,6 +39,9 @@ type TelemetryInput = {
   playbackAliveMs?: number;  // epoch ms of last playback advance
   lastStallReason?: string;
   lastStallMs?:     number;  // epoch ms of last detected decoder stall
+  // Outage forensics — see Device.bootedAt. Time since boot (SystemClock.elapsedRealtime,
+  // deep sleep included), converted to a boot instant on arrival.
+  uptimeMs?:        number;
 };
 
 // Player-side incident records (crash stacks, decoder stalls, watchdog fallbacks),
@@ -143,6 +147,11 @@ export async function POST(req: NextRequest) {
     // Incidents ride along on any heartbeat/event batch; store before branching so the
     // telemetry-only path gets them too. Best-effort — never fails the request.
     await storeIncidents(device.id, correlationId, body.incidents).catch(() => 0);
+    // `device` is the row as it was BEFORE this request's heartbeat write, so
+    // this captures the recovery edge. Only resolve on paths that actually set
+    // status ONLINE — resolving without the flip would leave the alert closed
+    // while the device still reads OFFLINE, and the next sweep would re-open it.
+    const wasOffline = device.status === 'OFFLINE';
     if (!Array.isArray(events) || events.length === 0) {
       // Allow empty event batches if telemetry-only heartbeat
       if (telemetry) {
@@ -153,6 +162,10 @@ export async function POST(req: NextRequest) {
             ...telemetryToDeviceData(telemetry),
           },
         }).catch(() => { /* telemetry columns may not exist yet */ });
+        // after(), not a bare void — see the note in /api/device/plan: this is the
+    // only writer of RESOLVED, and a promise dropped at response-flush would
+    // strand the alert OPEN and silence the device for good.
+    if (wasOffline) after(() => resolveOfflineAlerts(device.id));
         const envelope = await respond({ accepted: 0, telemetry: true }, { route, request: { correlationId, eventsCount: 0 }, outcome: 'success', policyFlags: ['telemetry_only'], startedAtMs });
         return NextResponse.json(envelope);
       }
@@ -238,6 +251,10 @@ export async function POST(req: NextRequest) {
         ...(telemetry ? telemetryToDeviceData(telemetry) : {}),
       },
     }).catch(() => { /* telemetry columns may not exist yet */ });
+    // after(), not a bare void — see the note in /api/device/plan: this is the
+    // only writer of RESOLVED, and a promise dropped at response-flush would
+    // strand the alert OPEN and silence the device for good.
+    if (wasOffline) after(() => resolveOfflineAlerts(device.id));
 
     const envelope = await respond({ accepted }, { route, request: { correlationId, eventsCount: batch.length }, outcome: 'success', policyFlags: [], startedAtMs });
     return NextResponse.json(envelope);
