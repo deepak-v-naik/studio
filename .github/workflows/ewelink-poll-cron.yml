@@ -1,0 +1,30 @@
+name: eWeLink poll cron
+
+# Polls Sonoff smart-plug state (relay/online/power) into SmartPlug +
+# PlugReading every 5 minutes — see src/app/api/cron/ewelink-poll/route.ts.
+# Same pattern as device-health-cron.yml: Vercel Hobby cannot schedule
+# sub-daily crons, so GitHub Actions carries the real cadence.
+#
+# Requires the CRON_SECRET repo secret (same value as the Vercel env var).
+# The endpoint no-ops cheaply when eWeLink is unconfigured or no plugs are
+# linked, so this workflow is safe to ship before the integration is set up.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call ewelink-poll endpoint
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://wearealive.in/api/cron/ewelink-poll)
+          echo "Response status: $status"
+          if [ "$status" -ge 400 ]; then
+            echo "ewelink-poll cron call failed with status $status"
+            exit 1
+          fi

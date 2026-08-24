@@ -338,6 +338,7 @@ model Device {
   telemetryEvents    TelemetryEvent[]
   remediationTickets RemediationTicket[]
   alerts             DeviceAlert[]
+  smartPlug          SmartPlug?
 
   @@index([storeId])
   @@index([groupName])
@@ -1031,4 +1032,64 @@ model PlayerConfig {
   // per store). Plain id, not a relation — a deleted campaign just means no filler.
   fillerCampaignId         String?
   updatedAt                DateTime @updatedAt
+}
+
+// ─── eWeLink smart plugs (Sonoff) — per-screen mains switch + power telemetry ─
+
+// Singleton row (id always 1) — the studio's linked eWeLink account. Tokens come
+// from the OAuth flow (admin > Screens > screen drawer > Power > Connect) and are
+// refreshed by the ewelink-poll cron. needsReauth flips on when a refresh fails;
+// the Power card then shows a re-connect button.
+model EwelinkAccount {
+  id           Int       @id @default(1)
+  region       String // cn | as | us | eu → https://{region}-apia.coolkit.{cn|cc}
+  accessToken  String
+  refreshToken String
+  atExpiresAt  DateTime?
+  rtExpiresAt  DateTime?
+  needsReauth  Boolean   @default(false)
+  updatedAt    DateTime  @updatedAt
+}
+
+// A Sonoff plug/switch wired in front of one screen's mains supply.
+model SmartPlug {
+  id              String    @id @default(cuid())
+  deviceId        String    @unique
+  ewelinkDeviceId String    @unique // eWeLink "deviceid"
+  name            String // name in the eWeLink app at link time
+  productModel    String? // e.g. "BASICR4", "POWR316D"
+  uiid            Int? // eWeLink device type id — drives unit scaling for readings
+  // true = has a metering chip (POW/S31 class): powerW/voltageV/currentA are real.
+  // false = relay-only (BASICR4 class): energy can only be estimated as
+  // ratedWatts × relay-on time, and readings are flagged estimated.
+  supportsEnergy  Boolean   @default(false)
+  ratedWatts      Float? // appliance draw used for relay-only estimates
+  online          Boolean?
+  switchOn        Boolean?
+  powerW          Float?
+  voltageV        Float?
+  currentA        Float?
+  lastPolledAt    DateTime?
+  createdAt       DateTime  @default(now())
+
+  device   Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  readings PlugReading[]
+}
+
+// Time series appended by /api/cron/ewelink-poll (5-min cadence via GitHub
+// Actions). energyWh is the energy consumed since the previous reading —
+// measured for metering plugs, ratedWatts-estimated (estimated=true) otherwise.
+model PlugReading {
+  id        String   @id @default(cuid())
+  plugId    String
+  at        DateTime @default(now())
+  online    Boolean
+  switchOn  Boolean
+  powerW    Float?
+  energyWh  Float?
+  estimated Boolean  @default(false)
+
+  plug SmartPlug @relation(fields: [plugId], references: [id], onDelete: Cascade)
+
+  @@index([plugId, at])
 }

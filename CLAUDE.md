@@ -274,6 +274,8 @@ PLAYER_OTA_MANIFEST_URL         # ALIVE Player OTA — latest.json manifest URL;
 NEXT_PUBLIC_EXPO_PREVIEW_URL    # Admin Dashboard → "Store app" QR target (EAS build link or exp:// URL, optional)
 PREMIUM_SIGNUP_KEY              # secret for the gated premium store signup link /store?premium=<key> (optional)
 PREMIUM_MONTHLY_PAISE           # premium store monthly remuneration in paise (default 100000 = ₹1000)
+EWELINK_APP_ID                  # eWeLink OAuth app (dev.ewelink.cc) — Sonoff smart plug power control (optional)
+EWELINK_APP_SECRET              # eWeLink OAuth app secret; whitelist <site>/api/ewelink/callback in the app settings
 ```
 
 ---
