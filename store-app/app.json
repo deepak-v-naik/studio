@@ -53,6 +53,13 @@
           "cameraPermission": "Allow ALIVE Store to use the camera for your KYC selfie."
         }
       ],
+      [
+        "expo-notifications",
+        {
+          "color": "#ef4444",
+          "defaultChannel": "alerts"
+        }
+      ],
       "expo-asset"
     ],
     "extra": {

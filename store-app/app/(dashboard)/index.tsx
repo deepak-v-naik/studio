@@ -11,6 +11,7 @@ import * as Location from 'expo-location';
 import { C } from '../../lib/colors';
 import { loadSession, saveSession } from '../../lib/storage';
 import { getStoreMe, uploadVerificationPhoto, type StoreSession } from '../../lib/api';
+import { registerForPush } from '../../lib/notifications';
 
 type Stage = 'new' | 'contacted' | 'visited' | 'installed' | 'live' | string;
 
@@ -157,11 +158,15 @@ export default function Overview() {
   useEffect(() => {
     loadSession().then(async (local) => {
       if (local) setStore(local);
+      let session = local;
       try {
         const fresh = await getStoreMe(local?.id, local?.token);
         setStore(fresh);
         await saveSession(fresh);
+        session = fresh;
       } catch { /* use cached */ }
+      // Bind this phone to the store's screen-offline alerts (best-effort).
+      void registerForPush(session);
       setLoading(false);
     });
   }, []);

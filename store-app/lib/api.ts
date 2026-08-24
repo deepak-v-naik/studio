@@ -149,3 +149,26 @@ export async function uploadVerificationPhoto(opts: {
     clearTimeout(tid);
   }
 }
+
+/**
+ * Binds this phone's Expo push token to the signed-in store so the server can
+ * push screen-offline alerts (see studio src/lib/device-alerts.ts).
+ */
+export async function registerPushToken(pushToken: string, session: StoreSession): Promise<void> {
+  const qs = session.id ? `?storeId=${session.id}` : '';
+  await request(`/api/stores/push-token${qs}`, {
+    method: 'POST',
+    body: JSON.stringify({ token: pushToken }),
+    headers: authHeaders(session.token),
+  });
+}
+
+/** Unbinds a push token on sign-out (best-effort — dead tokens are also pruned server-side). */
+export async function unregisterPushToken(pushToken: string, session: StoreSession): Promise<void> {
+  const qs = session.id ? `?storeId=${session.id}` : '';
+  await request(`/api/stores/push-token${qs}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ token: pushToken }),
+    headers: authHeaders(session.token),
+  });
+}

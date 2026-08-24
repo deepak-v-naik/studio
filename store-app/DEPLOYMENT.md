@@ -151,3 +151,28 @@ eas submit --platform android --profile production
 - EAS automatically generates and stores the Android keystore on first production build.
 - **Critical:** Download and back up the keystore from the EAS dashboard (Setup → Credentials). Losing it means you cannot update the Play Store app.
 - Never commit `google-service-account.json` to git.
+
+## Push notifications (screen-offline alerts)
+
+The app registers the phone's Expo push token against the signed-in store
+(`lib/notifications.ts` → `POST /api/stores/push-token`). The server pushes
+"screen offline" / "back online" alerts to it from `src/lib/device-alerts.ts`
+via Expo's push API — no server-side FCM key needed.
+
+**One-time Android delivery prerequisite (without this, token registration
+succeeds but no notification ever arrives):**
+
+1. In the Firebase console (the same ALIVE project the TV player uses is fine),
+   add an Android app with package `com.partner.alive` and download its
+   `google-services.json` into `store-app/`.
+2. Reference it in `app.json`: `"android": { "googleServicesFile": "./google-services.json", ... }`.
+3. Upload the FCM V1 service-account key to EAS so Expo's push service may send
+   through your Firebase project: `npx eas credentials` → Android →
+   `com.partner.alive` → Google Service Account → "Set up FCM V1".
+4. Rebuild the APK (`npm run build:android`). Expo Go cannot receive remote
+   push on Android SDK 52+ — only EAS builds can.
+
+Test end-to-end: sign in on a physical device, accept the notification
+permission, then from the studio repo run the sender directly against the
+store's id, or use Expo's push tool (https://expo.dev/notifications) with the
+token from the `PushSubscription` row.

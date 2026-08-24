@@ -3,7 +3,8 @@ import { TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C } from '../../lib/colors';
-import { clearSession } from '../../lib/storage';
+import { clearSession, loadSession } from '../../lib/storage';
+import { unregisterPush } from '../../lib/notifications';
 
 const TABS = [
   { name: 'index',      title: 'Overview', icon: 'grid-outline'        },
@@ -18,6 +19,11 @@ export default function DashboardLayout() {
   const insets = useSafeAreaInsets();
 
   const logout = async () => {
+    // Read the session BEFORE clearing it — unregisterPush needs the signed
+    // token for auth. The network call itself is fire-and-forget so sign-out
+    // never waits on it.
+    const session = await loadSession();
+    void unregisterPush(session);
     await clearSession();
     router.replace('/(auth)/sign-in');
   };
