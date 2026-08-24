@@ -56,7 +56,11 @@ export async function pushToStore(storeId: string, payload: PushPayload): Promis
   if (!vapidConfigured()) return 0;
 
   try {
-    const subs = await db.pushSubscription.findMany({ where: { storeId } });
+    // Expo mobile-app tokens share this table (endpoint = the raw token, see
+    // src/lib/expo-push.ts) — only real push-service URLs belong to this sender.
+    const subs = await db.pushSubscription.findMany({
+      where: { storeId, endpoint: { startsWith: 'https://' } },
+    });
     if (!subs.length) return 0;
 
     const webpush = (await import('web-push')).default;

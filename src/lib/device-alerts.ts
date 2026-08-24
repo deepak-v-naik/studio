@@ -12,7 +12,27 @@
 
 import { db } from '@/lib/db';
 import { notifyAdminWA, notifyStoreWA, deviceOfflineAdminMsg, deviceOfflinePartnerMsg, deviceBackOnlineMsg } from '@/lib/notify';
-import { pushToStore } from '@/lib/web-push';
+import { pushToStore, type PushPayload } from '@/lib/web-push';
+import { pushExpoToStore } from '@/lib/expo-push';
+
+/**
+ * Fan a partner notification out to every push channel (browser + mobile app).
+ *
+ * AWAITED, not fire-and-forget: on Vercel the function instance can be frozen
+ * the moment the response is sent, killing any in-flight fetch. Since the alert
+ * row is deliberately marked notified BEFORE sending (a duplicate is worse than
+ * a miss), a push dropped by the freeze would be permanently lost. Both senders
+ * are guaranteed never to throw, so awaiting them keeps the never-break-the-cron
+ * invariant while pinning the sends inside the caller's awaited promise chain
+ * (the cron awaits escalateSustainedOutages; the device hot paths run
+ * resolveOfflineAlerts via after(), which waits on its promise).
+ */
+async function pushToStoreAllChannels(storeId: string, payload: PushPayload): Promise<void> {
+  await Promise.all([
+    pushToStore(storeId, payload),     // partner PWA (web push, needs VAPID keys)
+    pushExpoToStore(storeId, payload), // partner mobile app (Expo push)
+  ]);
+}
 
 /** Extra downtime past the offline edge before the partner is told. */
 export const PARTNER_NOTIFY_AFTER_MS = 40 * 60 * 1000; // ≈60 min total downtime
@@ -153,7 +173,7 @@ export async function escalateSustainedOutages(now = new Date()): Promise<number
         since:     alert.lastSeenAt ?? alert.startedAt,
       });
 
-      void pushToStore(alert.storeId, {
+      await pushToStoreAllChannels(alert.storeId, {
         title: 'Your ALIVE screen is offline',
         body:  'It stopped playing about an hour ago. Please check the screen’s power and Wi-Fi.',
         url:   '/store-dashboard',
@@ -196,7 +216,7 @@ export async function resolveOfflineAlerts(deviceId: string, now = new Date()): 
       });
 
       if (alert.partnerNotifiedAt && alert.storeId) {
-        void pushToStore(alert.storeId, {
+        await pushToStoreAllChannels(alert.storeId, {
           title: 'Your ALIVE screen is back online',
           body:  'Ads are playing again — nothing further needed. Thank you!',
           url:   '/store-dashboard',
