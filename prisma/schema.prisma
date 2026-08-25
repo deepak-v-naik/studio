@@ -331,6 +331,11 @@ model Device {
   // was force-stopped; comparing bootedAt across the gap tells them apart without a site
   // visit — it moves forward only if the device actually rebooted.
   bootedAt         DateTime?
+  // Companion to bootedAt: when the PLAYER PROCESS last started, derived from the
+  // appUptimeMs the heartbeat reports. bootedAt says whether the box restarted, this
+  // says whether the app did — and only the pair separates the three outage causes
+  // (see classifyOutageCause in src/lib/device-alerts.ts).
+  appStartedAt     DateTime?
   updatedAt        DateTime          @updatedAt
 
   store              Store?              @relation(fields: [storeId], references: [id], onDelete: SetNull)
@@ -379,6 +384,18 @@ model DeviceAlert {
   startedAt   DateTime  @default(now())
   resolvedAt  DateTime?
   downtimeSec Int? // filled in on resolution, for reporting
+
+  // ── Why did it go offline ────────────────────────────────────────────────
+  // Filled on RECOVERY, by diffing these snapshots against the values the returning
+  // device reports. The snapshots are mandatory: Device.bootedAt/appStartedAt are
+  // overwritten by every heartbeat, so without freezing the pre-outage values here
+  // there is no "before" left to compare against and the cause is unrecoverable.
+  bootedAtBefore     DateTime?
+  appStartedBefore   DateTime?
+  appVersionBefore   String?
+  cause              String? // POWER_LOST | NETWORK_LOST | APP_STOPPED | PLAYER_UPDATED | UNKNOWN
+  causeConfidence    String? // high | medium | low
+  causeEvidence      String? // human-readable lines, newline separated — shown verbatim in the panel
 
   adminReadAt       DateTime? // admin dismissed/saw it in the panel
   partnerNotifiedAt DateTime? // partner push/WhatsApp actually attempted

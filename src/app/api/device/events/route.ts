@@ -42,6 +42,8 @@ type TelemetryInput = {
   // Outage forensics — see Device.bootedAt. Time since boot (SystemClock.elapsedRealtime,
   // deep sleep included), converted to a boot instant on arrival.
   uptimeMs?:        number;
+  // Time since the player PROCESS started, same clock as uptimeMs — see Device.appStartedAt.
+  appUptimeMs?:     number;
 };
 
 // Player-side incident records (crash stacks, decoder stalls, watchdog fallbacks),
@@ -100,6 +102,15 @@ function telemetryToDeviceData(t: TelemetryInput) {
     && t.uptimeMs >= 0
     && t.uptimeMs < TEN_YEARS_MS
     ? new Date(Date.now() - t.uptimeMs) : null;
+  // Same treatment for the process start. A process cannot predate its own device, so
+  // an appUptime longer than the device uptime is a bad reading and is dropped rather
+  // than stored — it would otherwise read as "the app never restarted" forever.
+  const appStartedAt = typeof t.appUptimeMs === 'number'
+    && Number.isFinite(t.appUptimeMs)
+    && t.appUptimeMs >= 0
+    && t.appUptimeMs < TEN_YEARS_MS
+    && (typeof t.uptimeMs !== 'number' || t.appUptimeMs <= t.uptimeMs + 60_000)
+    ? new Date(Date.now() - t.appUptimeMs) : null;
   return {
     ...(typeof t.cpuTempC      === 'number' ? { cpuTempC: t.cpuTempC, cpuTempUpdatedAt: new Date() } : {}),
     ...(typeof t.freeStorageMb === 'number' ? { freeStorageMb: t.freeStorageMb } : {}),
@@ -109,6 +120,7 @@ function telemetryToDeviceData(t: TelemetryInput) {
     ...(t.lastStallReason ? { lastStallReason: t.lastStallReason } : {}),
     ...(stallAt           ? { lastStallAt:     stallAt           } : {}),
     ...(bootedAt          ? { bootedAt:        bootedAt          } : {}),
+    ...(appStartedAt      ? { appStartedAt:    appStartedAt      } : {}),
   };
 }
 

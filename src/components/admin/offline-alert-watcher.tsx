@@ -25,7 +25,22 @@ type AlertRow = {
   startedAt: string;
   resolvedAt: string | null;
   adminReadAt: string | null;
+  // Filled when the screen comes back and the server works out what happened.
+  cause: string | null;
+  causeConfidence: string | null;
+  causeEvidence: string | null;
 };
+
+/** Plain-language cause for the recovery toast — the bit that has to land at a glance. */
+function causeLine(cause: string | null): string | null {
+  switch (cause) {
+    case 'POWER_LOST':     return 'Cause: power was cut at the store';
+    case 'NETWORK_LOST':   return 'Cause: internet/Wi-Fi dropped — the screen and player were fine';
+    case 'APP_STOPPED':    return 'Cause: the player app stopped';
+    case 'PLAYER_UPDATED': return 'Cause: restarted for a player update';
+    default:               return null;
+  }
+}
 
 export default function OfflineAlertWatcher({
   onUnreadChange, onOpenAlerts,
@@ -102,7 +117,16 @@ export default function OfflineAlertWatcher({
         }
 
         for (const a of freshlyBack) {
-          toast.success(`${a.storeName ?? a.deviceName} is back online`, { duration: 6000 });
+          // The recovery toast is where the cause lands: the returning screen has just
+          // reported the restart clocks that make the outage diagnosable, so this is the
+          // first moment we can say WHY rather than merely that it dropped. Held longer
+          // than a bare "back online" because it now carries something to act on.
+          const line = causeLine(a.cause);
+          toast.success(`${a.storeName ?? a.deviceName} is back online`, {
+            description: line ?? undefined,
+            duration: line ? 12000 : 6000,
+            action: line && onOpenAlerts ? { label: 'Details', onClick: onOpenAlerts } : undefined,
+          });
         }
       } catch { /* transient — the next poll retries */ }
     };

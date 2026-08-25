@@ -45,7 +45,114 @@ export type NewlyOfflineDevice = {
   storeId: string | null;
   lastSeen: Date | null;
   store?: { storeName: string } | null;
+  // Pre-outage snapshot — frozen onto the alert row because the Device columns are
+  // overwritten by every heartbeat (see DeviceAlert.bootedAtBefore).
+  bootedAt?: Date | null;
+  appStartedAt?: Date | null;
+  appVersion?: string | null;
 };
+
+export type OutageCause = 'POWER_LOST' | 'NETWORK_LOST' | 'APP_STOPPED' | 'PLAYER_UPDATED' | 'UNKNOWN';
+
+export type CauseVerdict = {
+  cause: OutageCause;
+  confidence: 'high' | 'medium' | 'low';
+  evidence: string[];
+};
+
+/** Clock slack: heartbeats are ~15 min apart and timestamps are derived from an uptime
+ *  measured a round-trip earlier, so treat sub-3-minute movement as "unchanged". */
+const CLOCK_SLACK_MS = 3 * 60 * 1000;
+
+/**
+ * Works out WHY a screen was offline, at the moment it comes back.
+ *
+ * The three causes are indistinguishable while the screen is down — the witness is the
+ * thing that died. They become separable on recovery, because the returning device
+ * reports two independent restart clocks:
+ *
+ *   the box restarted            -> it lost power (nothing else stops a running TV)
+ *   box steady, app restarted    -> the player died: crash, force-stop, or an update
+ *   box steady, app steady       -> nothing on the device failed, so the link did
+ *
+ * The last line is the valuable one: an app that ran continuously *through* the outage
+ * is positive proof the fault was the network, not the screen — which is the difference
+ * between sending an engineer and calling the ISP.
+ *
+ * Deliberately returns UNKNOWN with a stated reason rather than guessing: a confident
+ * wrong cause sends someone to the wrong site, which is worse than "not yet known".
+ */
+export function classifyOutageCause(before: {
+  lastSeenAt: Date | null;
+  bootedAtBefore: Date | null;
+  appStartedBefore: Date | null;
+  appVersionBefore: string | null;
+}, after: {
+  bootedAt: Date | null;
+  appStartedAt: Date | null;
+  appVersion: string | null;
+}): CauseVerdict {
+  const evidence: string[] = [];
+
+  // No baseline means the screen was running a build that predates uptime reporting,
+  // so there is nothing to diff. Say so plainly instead of inventing a cause.
+  if (!before.bootedAtBefore || !after.bootedAt) {
+    return {
+      cause: 'UNKNOWN',
+      confidence: 'low',
+      evidence: [
+        'Cannot determine the cause: this screen is running a player build that does not report uptime.',
+        'Install the current APK and any future outage on this screen will be diagnosed automatically.',
+      ],
+    };
+  }
+
+  const rebooted = after.bootedAt.getTime() - before.bootedAtBefore.getTime() > CLOCK_SLACK_MS;
+
+  if (rebooted) {
+    evidence.push(`The device restarted during the outage (booted ${fmtIst(after.bootedAt)}).`);
+    // An update we caused looks like a reboot, so rule it out before blaming the mains.
+    if (before.appVersionBefore && after.appVersion && before.appVersionBefore !== after.appVersion) {
+      evidence.push(`The player also updated, ${before.appVersionBefore} to ${after.appVersion} — the restart was the update, not a power failure.`);
+      return { cause: 'PLAYER_UPDATED', confidence: 'high', evidence };
+    }
+    evidence.push('Nothing else stops a running TV, so the power was interrupted — a cut, an unplugged set, or someone switching it off at the wall.');
+    return { cause: 'POWER_LOST', confidence: 'high', evidence };
+  }
+
+  evidence.push(`The device never restarted — it has been powered on since ${fmtIst(before.bootedAtBefore)}, right through the outage.`);
+
+  if (!before.appStartedBefore || !after.appStartedAt) {
+    evidence.push('Whether the player itself restarted is unknown: this build does not report process uptime.');
+    return { cause: 'UNKNOWN', confidence: 'low', evidence };
+  }
+
+  const appRestarted = after.appStartedAt.getTime() - before.appStartedBefore.getTime() > CLOCK_SLACK_MS;
+
+  if (appRestarted) {
+    evidence.push(`The player restarted during the outage (started ${fmtIst(after.appStartedAt)}) — it crashed, was force-stopped, or was closed.`);
+    return { cause: 'APP_STOPPED', confidence: 'high', evidence };
+  }
+
+  evidence.push('The player also ran continuously — it never restarted either.');
+  evidence.push('The screen and the app were both healthy the whole time, so the only thing that failed was the connection: Wi-Fi, the router, or the internet line.');
+  return { cause: 'NETWORK_LOST', confidence: 'high', evidence };
+}
+
+function fmtIst(d: Date): string {
+  return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** One-line summary for the admin toast — the sentence that has to land at a glance. */
+export function causeHeadline(cause: string | null): string {
+  switch (cause) {
+    case 'POWER_LOST':     return 'Power was cut';
+    case 'NETWORK_LOST':   return 'Internet/Wi-Fi dropped — screen and player were fine';
+    case 'APP_STOPPED':    return 'The player app stopped';
+    case 'PLAYER_UPDATED': return 'Restarted for a player update';
+    default:               return 'Cause not yet known';
+  }
+}
 
 /**
  * Records an alert for each device that just crossed into OFFLINE and notifies
@@ -75,6 +182,12 @@ export async function openOfflineAlerts(devices: NewlyOfflineDevice[]): Promise<
           deviceName: d.name,
           storeName:  d.store?.storeName ?? null,
           lastSeenAt: d.lastSeen,
+          // Freeze the pre-outage state now — these Device columns are overwritten by
+          // the very first heartbeat when the screen returns, which is exactly the
+          // moment we need to compare against them.
+          bootedAtBefore:   d.bootedAt ?? null,
+          appStartedBefore: d.appStartedAt ?? null,
+          appVersionBefore: d.appVersion ?? null,
         },
       });
       opened.push(d);
@@ -201,17 +314,45 @@ export async function resolveOfflineAlerts(deviceId: string, now = new Date()): 
   try {
     const open = await db.deviceAlert.findMany({
       where:  { deviceId, status: 'OPEN' },
-      select: { id: true, storeId: true, storeName: true, deviceName: true, startedAt: true, partnerNotifiedAt: true },
+      select: {
+        id: true, storeId: true, storeName: true, deviceName: true, startedAt: true,
+        partnerNotifiedAt: true, lastSeenAt: true,
+        bootedAtBefore: true, appStartedBefore: true, appVersionBefore: true,
+      },
     });
     if (!open.length) return;
 
+    // Read the device AFTER its recovery heartbeat has landed (callers invoke this from
+    // after(), post-update), so these are the values the returning screen just reported.
+    const fresh = await db.device.findUnique({
+      where:  { id: deviceId },
+      select: { bootedAt: true, appStartedAt: true, appVersion: true },
+    }).catch(() => null);
+
     for (const alert of open) {
+      const verdict = fresh
+        ? classifyOutageCause(
+            {
+              lastSeenAt:       alert.lastSeenAt,
+              bootedAtBefore:   alert.bootedAtBefore,
+              appStartedBefore: alert.appStartedBefore,
+              appVersionBefore: alert.appVersionBefore,
+            },
+            { bootedAt: fresh.bootedAt, appStartedAt: fresh.appStartedAt, appVersion: fresh.appVersion },
+          )
+        : null;
+
       await db.deviceAlert.update({
         where: { id: alert.id },
         data: {
           status:      'RESOLVED',
           resolvedAt:  now,
           downtimeSec: Math.max(0, Math.round((now.getTime() - alert.startedAt.getTime()) / 1000)),
+          ...(verdict ? {
+            cause:           verdict.cause,
+            causeConfidence: verdict.confidence,
+            causeEvidence:   verdict.evidence.join('\n'),
+          } : {}),
         },
       });
 

@@ -53,7 +53,12 @@ export async function GET(req: NextRequest) {
         lastSeen: { lt: offlineThresh },
       },
       data: { status: 'OFFLINE' },
-      select: { id: true, name: true, storeId: true, lastSeen: true },
+      // bootedAt/appStartedAt/appVersion ride along so openOfflineAlerts can freeze the
+      // pre-outage state onto the alert row — the recovery heartbeat overwrites them.
+      select: {
+        id: true, name: true, storeId: true, lastSeen: true,
+        bootedAt: true, appStartedAt: true, appVersion: true,
+      },
     });
     const markedOffline = justWentOffline.length;
 
