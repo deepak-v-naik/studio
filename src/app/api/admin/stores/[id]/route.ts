@@ -145,9 +145,12 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     } catch { /* columns not yet migrated */ }
 
     // Delete store (cascades to StorePayment, StoreOffer, Bill, Device via FK)
-    await db.$executeRaw`DELETE FROM "Store" WHERE "id" = ${id}`;
-    // Delete the user account
-    await db.$executeRaw`DELETE FROM "User" WHERE "id" = ${userId}`;
+    // and the user account atomically — a surviving User with no Store leaves
+    // a login that 401s on every store API forever.
+    await db.$transaction([
+      db.$executeRaw`DELETE FROM "Store" WHERE "id" = ${id}`,
+      db.$executeRaw`DELETE FROM "User" WHERE "id" = ${userId}`,
+    ]);
 
     await pushDecommission(doomedDevices.map((d) => d.fcmToken!));
     for (const key of photoKeys) await deleteObject(key).catch(() => { /* best-effort */ });

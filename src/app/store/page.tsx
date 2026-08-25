@@ -229,7 +229,13 @@ function RegistrationForm({ premium, premiumMonthly, premiumKey }: {
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem(DRAFT_KEY);
-      if (saved && saved.trim()) setForm(JSON.parse(saved) as Form);
+      if (!saved || !saved.trim()) return;
+      const parsed: unknown = JSON.parse(saved);
+      // Merge over the initial shape — a draft from an older form version
+      // missing a field would otherwise crash validateForm on first render.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        setForm((p) => ({ ...p, ...(parsed as Partial<Form>) }));
+      }
     } catch { /* ignore */ }
   }, []);
 

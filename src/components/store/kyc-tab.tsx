@@ -5,6 +5,7 @@ import {
   Loader2, ShieldCheck, AlertCircle, Clock, CheckCircle2, Camera, FileText, IdCard, X, Upload,
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { storeFetch } from '@/lib/store-fetch';
 
 type KycStatus = 'not_started' | 'submitted' | 'approved' | 'rejected';
 
@@ -54,13 +55,19 @@ export default function KycTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/stores/kyc');
+      const res = await storeFetch('/api/stores/kyc');
       if (res.ok) {
         const d = await res.json() as KycData;
         setData(d);
         setUploads({ pan: d.panUrl, aadhaar: d.aadhaarUrl, selfie: d.selfieUrl });
         if (d.aadhaarLast4) setAadhaarLast4(d.aadhaarLast4);
+      } else if (res.status === 401) {
+        // A 401 must not render as "KYC not submitted" — that reads like the
+        // partner's approved documents were lost.
+        setError('Session expired — please log in again to see your KYC status.');
       }
+    } catch {
+      setError('Could not load KYC status. Check your connection and retry.');
     } finally { setLoading(false); }
   };
 
@@ -73,7 +80,7 @@ export default function KycTab() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/stores/upload', { method: 'POST', body: fd });
+      const res = await storeFetch('/api/stores/upload', { method: 'POST', body: fd });
       const d   = await res.json() as { url?: string; error?: string };
       if (!res.ok) throw new Error(d.error ?? 'Upload failed');
       setUploads((u) => ({ ...u, [slot]: d.url ?? null }));
@@ -93,7 +100,7 @@ export default function KycTab() {
     }
     setSubmitting(true); setError(null);
     try {
-      const res = await fetch('/api/stores/kyc', {
+      const res = await storeFetch('/api/stores/kyc', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({

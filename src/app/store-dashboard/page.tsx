@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Logo } from '@/components/icons/logo';
 import { extractGpsFromFile } from '@/lib/exif-gps';
+import { storeFetch } from '@/lib/store-fetch';
 import VoiceBillTab from '@/components/store/voice-bill-tab';
 import OffersTab from '@/components/store/offers-tab';
 import FlyerTab from '@/components/store/flyer-tab';
@@ -716,9 +717,9 @@ function PaymentTimeline({ store, onClaim }: { store: StoreInfo; onClaim: (month
   const monthlyRupees = Math.round(monthlyPaise / 100);
 
   useEffect(() => {
-    fetch('/api/stores/payments')
+    storeFetch('/api/stores/payments')
       .then(r => r.ok ? r.json() as Promise<PaymentRecord[]> : Promise.resolve([]))
-      .then(setPaymentRecords)
+      .then((rows) => setPaymentRecords(Array.isArray(rows) ? rows : []))
       .catch(() => setPaymentRecords([]));
   }, []);
 
@@ -950,12 +951,15 @@ function ClaimModal({ store, onClose, claimMonthKey, claimAmountPaise }: {
                 onClick={async () => {
                   setBusy(true); setErr(null);
                   try {
-                    const res = await fetch('/api/payout-claim', {
+                    const res = await storeFetch('/api/payout-claim', {
                       method:  'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body:    JSON.stringify({ month: claimMonthKey, amountPaise: claimAmountPaise }),
                     });
-                    if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error); }
+                    if (!res.ok) {
+                      const d = await res.json().catch(() => null) as { error?: string } | null;
+                      throw new Error(res.status === 401 ? 'Session expired — please log in again.' : (d?.error ?? 'Failed. Try again.'));
+                    }
                     setSent(true);
                   } catch (e) { setErr((e as Error).message ?? 'Failed. Try again.'); }
                   finally { setBusy(false); }
@@ -1075,6 +1079,12 @@ function OffersAndPayoutSettings({ store, onSaved }: { store: StoreInfo; onSaved
     try {
       const res = await fetch(`/api/stores/me?storeId=${encodeURIComponent(store.id ?? '')}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(store.token ? { 'x-store-token': store.token } : {}) }, body: JSON.stringify(payout) });
       if (res.ok) onSaved(payout);
+      else {
+        // Silent loss of payout details is worse than a blunt alert.
+        alert(res.status === 401
+          ? 'Session expired — please log in again, then save your payout details.'
+          : 'Could not save payout details. Please try again.');
+      }
     } finally { setBusy(false); }
   };
 
@@ -1449,6 +1459,7 @@ export default function StoreDashboardPage() {
   const [storeInfo, setStoreInfo] = useState<StoreInfo | null>(null);
   const [storeLoading, setStoreLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   // On first render, try to populate from localStorage immediately.
   // This ensures the dashboard is usable right after registration even if
@@ -1465,12 +1476,25 @@ export default function StoreDashboardPage() {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 20000);
     try {
-      const res = await fetch('/api/stores/me', { signal: controller.signal });
+      // storeFetch attaches the cached signed x-store-token, so this works
+      // even after the next-auth cookie has expired.
+      const res = await storeFetch('/api/stores/me', { signal: controller.signal });
       if (res.ok) {
         const data = await res.json() as StoreInfo;
         setStoreInfo(data);
         // Keep localStorage in sync with server data
         try { localStorage.setItem(LS_SESSION_KEY, JSON.stringify(data)); } catch { /* ignore */ }
+        return;
+      }
+      if (res.status === 401 || res.status === 404) {
+        // Deterministic: neither cookie nor cached token vouches for a store
+        // any more (expired/pre-token session, or the store row is gone).
+        // Retrying can't fix it — clear the stale cache and ask for a fresh
+        // login instead of rendering frozen data forever.
+        try { localStorage.removeItem(LS_SESSION_KEY); } catch { /* ignore */ }
+        setStoreInfo(null);
+        setSessionExpired(true);
+        void signOut({ redirect: false }).catch(() => { /* no live session */ });
         return;
       }
       if (attempt === 0) {
@@ -1506,9 +1530,21 @@ export default function StoreDashboardPage() {
   }, [status]);
 
   useEffect(() => {
-    if (status === 'authenticated' && !storeInfo) fetchStore();
-    // If already have localStorage data, still refresh from API in background
-    if (status === 'authenticated' && storeInfo) fetchStore();
+    if (status === 'authenticated') { fetchStore(); return; }
+    if (status === 'unauthenticated') {
+      const local = readLocalSession();
+      // Cookie gone, but the cached signed token can still authenticate the
+      // refresh — and if it can't, fetchStore clears the cache and surfaces
+      // the login form instead of leaving frozen data on screen.
+      if (local?.token) { fetchStore(); return; }
+      if (local) {
+        // Pre-token cache (before the 2026-08-18 IDOR fix) with no cookie:
+        // every API call would 401 and the data on screen is frozen forever.
+        try { localStorage.removeItem(LS_SESSION_KEY); } catch { /* ignore */ }
+        setStoreInfo(null);
+        setSessionExpired(true);
+      }
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
@@ -1555,7 +1591,18 @@ export default function StoreDashboardPage() {
     );
   }
 
-  if (status === 'unauthenticated' || !session) return <PhoneLogin />;
+  if (status === 'unauthenticated' || !session) {
+    return (
+      <>
+        {sessionExpired && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 text-center text-xs font-medium text-amber-800">
+            Your session has expired. Log in again to see your store data — nothing has been lost.
+          </div>
+        )}
+        <PhoneLogin />
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">

@@ -12,10 +12,10 @@ type StoreRow = {
 };
 
 export async function GET(req: NextRequest) {
-  const storeId = await resolveStoreId(req.nextUrl.searchParams.get('storeId'));
-  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   try {
+    const storeId = await resolveStoreId(req.nextUrl.searchParams.get('storeId'));
+    if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     // Select only base columns that exist in the init migration.
     // liveAt is fetched separately so a missing column never breaks dashboard load.
     const rows = await db.$queryRaw<StoreRow[]>`
@@ -134,10 +134,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const storeId = await resolveStoreId(req.nextUrl.searchParams.get('storeId'));
-  if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   try {
+    const storeId = await resolveStoreId(req.nextUrl.searchParams.get('storeId'));
+    if (!storeId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     const body = await req.json() as {
       email?: string;
       payoutMethod?: string; upiId?: string;

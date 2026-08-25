@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Download, Loader2, RefreshCw, Printer, Tag, ChevronDown, ChevronUp } from 'lucide-react';
+import { storeFetch } from '@/lib/store-fetch';
 
 type Offer = {
   id: string; productName: string; weight: string | null;
@@ -225,7 +226,7 @@ export default function FlyerTab({ storeName }: { storeName: string }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch('/api/stores/offers')
+    storeFetch('/api/stores/offers')
       .then((r) => r.json())
       .then((data: unknown) => {
         const list = Array.isArray(data) ? (data as Offer[]) : [];

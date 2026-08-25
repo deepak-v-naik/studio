@@ -379,7 +379,12 @@ async function openAsPartner(s: StoreReg) {
       const d = await res.json() as { token?: string };
       if (d.token) session.token = d.token;
     }
-  } catch { /* dashboard still opens read-only from the cached payload */ }
+  } catch { /* fall through to the warning below */ }
+  if (!session.token) {
+    // Without the token every write from the impersonated tab (GPS photos,
+    // payout edits) silently 401s — say so instead of losing the uploads.
+    alert('Could not get partner access — the dashboard will open read-only. Sign out of the admin panel, log back in, and try again before uploading photos or editing details.');
+  }
   localStorage.setItem('alive_store_session', JSON.stringify(session));
   if (win) win.location.href = '/store-dashboard';
   else window.open('/store-dashboard', '_blank');
@@ -486,20 +491,37 @@ function AdminPhotoCard({ label, url, lat, lng, source, at, storeLat, storeLng }
 function StoresPanel() {
   const [stores,   setStores]   = useState<StoreReg[]>([]);
   const [loading,  setLoading]  = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search,   setSearch]   = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
   const [saving,   setSaving]   = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
     const pw = sessionStorage.getItem(SS_PW) ?? '';
     fetch('/api/stores/save', { headers: { 'admin-password': pw } })
-      .then((r) => r.json())
-      .then((body) => {
-        const arr = Array.isArray(body) ? body : (body?.data ?? []);
-        setStores(arr as StoreReg[]);
+      .then(async (r) => {
+        if (r.status === 401) {
+          // The password in sessionStorage no longer matches ADMIN_PASSWORD
+          // (rotated in Vercel, or a restored tab) — back to the gate rather
+          // than crashing every panel with an error-envelope payload.
+          sessionStorage.removeItem('alive_admin');
+          sessionStorage.removeItem(SS_PW);
+          window.location.reload();
+          return null;
+        }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
       })
-      .catch(() => setStores([]))
+      .then((body) => {
+        if (body === null) return;
+        const arr = Array.isArray(body) ? body : body?.data;
+        if (Array.isArray(arr)) setStores(arr as StoreReg[]);
+        else throw new Error('Unexpected response shape');
+      })
+      .catch(() => setLoadError('Could not load partners. Check your connection and retry.'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -557,6 +579,15 @@ function StoresPanel() {
   const premium  = stores.filter((s) => s.tier === 'premium').length;
 
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16">
+        <p className="text-sm text-muted-foreground">{loadError}</p>
+        <button onClick={load} className="rounded-lg border border-border px-4 py-2 text-xs font-semibold hover:bg-muted">Retry</button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
