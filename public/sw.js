@@ -10,7 +10,10 @@
 // v2 -> v3: adds the push / notificationclick handlers below. The activate
 // handler deletes every cache whose name isn't CACHE, so bumping this is what
 // makes already-installed workers pick up the new script.
-const CACHE     = 'alive-partner-v3';
+// v3 -> v4: /offline now auto-reloads when connectivity returns. The old copy
+// is precached, so without this bump existing browsers would keep serving the
+// dead-end version that strands users on the offline screen after a blip.
+const CACHE     = 'alive-partner-v4';
 const PRECACHE  = [
   '/store-dashboard',
   '/store',
