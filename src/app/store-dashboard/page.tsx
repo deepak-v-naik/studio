@@ -641,18 +641,31 @@ function ImageModal({ src, onClose }: { src: string; onClose: () => void }) {
 
 // ─── Deals carousel (store-specific flyers) ──────────────────────────────────
 
-function StoreFlyers({ storeName }: { storeName: string }) {
+function StoreFlyers({ storeId, storeName, token }: { storeId?: string; storeName: string; token?: string }) {
   const [flyers,  setFlyers]  = useState<Flyer[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/flyers/save')
-      .then((r) => r.json() as Promise<Flyer[]>)
-      .then((all) => setFlyers(all.filter((f) => f.storeName.toLowerCase() === storeName.toLowerCase())))
+    // Match flyers by storeId server-side (?storeId= + token/session, see
+    // resolveStoreId) — storeName drifts on admin renames/whitespace. Public
+    // list + normalized-name compare is the fallback when we can't prove
+    // ownership (stale cached session without id/token).
+    const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+    const byName = () =>
+      fetch('/api/flyers/save')
+        .then((r) => r.json() as Promise<Flyer[]>)
+        .then((all) => all.filter((f) => norm(f.storeName) === norm(storeName)));
+    const load = storeId
+      ? fetch(`/api/flyers/save?storeId=${encodeURIComponent(storeId)}`, {
+          headers: token ? { 'x-store-token': token } : undefined,
+        }).then((r) => (r.ok ? (r.json() as Promise<Flyer[]>) : byName()))
+      : byName();
+    load
+      .then(setFlyers)
       .catch(() => setFlyers([]))
       .finally(() => setLoading(false));
-  }, [storeName]);
+  }, [storeId, storeName, token]);
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>;
 
@@ -1377,7 +1390,7 @@ function MainDashboard({ store, onLogout }: { store: StoreInfo; onLogout: () => 
                   <h2 className="text-sm font-bold text-foreground">Active flyers</h2>
                   <span className="text-[10px] text-muted-foreground bg-muted px-2 py-1 rounded-full">Published by Alive team</span>
                 </div>
-                <StoreFlyers storeName={storeData.storeName} />
+                <StoreFlyers storeId={storeData.id} storeName={storeData.storeName} token={storeData.token} />
               </div>
               <div className="rounded-2xl border border-border bg-card p-5 space-y-2">
                 <h2 className="text-sm font-bold text-foreground">Want to run a flyer?</h2>
