@@ -11,7 +11,10 @@ datasource db {
   // Migrations must bypass PgBouncer: advisory locks + multi-statement DDL are
   // unreliable through transaction pooling, and a half-applied migration leaves
   // a failed _prisma_migrations row that blocks every later deploy (P3009).
-  directUrl = env("DATABASE_DIRECT_URL")
+  // DATABASE_URL_UNPOOLED is the Neon-Vercel integration's own direct URL, so
+  // it tracks Neon DNS changes automatically — the hand-set DATABASE_DIRECT_URL
+  // had gone stale (pre-cell hostname, P1001 on 2026-08-26's deploy).
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 // ─── Auth (Auth.js compatible) ───────────────────────────────────────────────
