@@ -1135,13 +1135,17 @@ function Ticker({ stats }: { stats: OpsStats | null }) {
   return (
     <div className="ticker">
       <div className="ticker__pill">Live wire</div>
-      <div className="ticker__track">
-        {[...items, ...items].map((text, i) => (
-          <span key={i} className="ticker__item">
-            <span>{text}</span>
-            <span className="ticker__dot">●</span>
-          </span>
-        ))}
+      {/* The track is translateX-animated; without this clipping viewport it
+          slides straight over the pill on its way left. */}
+      <div className="ticker__viewport">
+        <div className="ticker__track">
+          {[...items, ...items].map((text, i) => (
+            <span key={i} className="ticker__item">
+              <span>{text}</span>
+              <span className="ticker__dot">●</span>
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1345,7 +1349,7 @@ function Topbar({ section, liveCount, onOpenCmd, onOpenNotif, theme, setTheme, u
       </div>
       <button className="tb__search" onClick={onOpenCmd}>
         <Search className="h-3.5 w-3.5" />
-        <span style={{ flex: 1, color: 'var(--neutral-400)', font: '400 13px var(--font-body)', textAlign: 'left' }}>
+        <span className="tb__search-label">
           Search stores, brands, campaigns, screens…
         </span>
         <span className="tb__kbd">⌘K</span>

@@ -167,6 +167,14 @@ input, select, textarea { font-family: inherit; }
   border: 1px solid transparent;
   transition: border-color var(--dur-fast), background var(--dur-fast);
   cursor: pointer; text-align: left;
+  overflow: hidden;
+}
+/* Single line, ellipsized — when the topbar squeezes the search pill the long
+   placeholder used to wrap and spill outside the 38px-high button. */
+.tb__search-label {
+  flex: 1; min-width: 0;
+  color: var(--neutral-400); font: 400 13px var(--font-body); text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tb__search:focus-within { background: var(--surface); border-color: var(--adm-primary); box-shadow: 0 0 0 4px rgba(220,38,38,.10); }
 .tb__search input { background: transparent; border: 0; outline: 0; flex: 1; font: 400 13px var(--font-body); color: var(--ink); }
@@ -724,11 +732,19 @@ input, select, textarea { font-family: inherit; }
   padding: 4px 8px; border-radius: 4px;
   flex-shrink: 0;
 }
+.ticker__pill { position: relative; z-index: 1; }
+/* Clips the translateX-animated track so scrolling items can't ride over the
+   pill (or out of the bar) — the track itself must stay unclipped inside. */
+.ticker__viewport {
+  flex: 1 1 auto; min-width: 0; overflow: hidden;
+  display: flex; align-items: center; align-self: stretch;
+}
 .ticker__track {
   display: flex; align-items: center; gap: 24px;
   animation: ticker-scroll 60s linear infinite;
   white-space: nowrap;
   flex-shrink: 0;
+  width: max-content;
 }
 .ticker__item { display: inline-flex; align-items: center; gap: 10px; font: 400 12px var(--font-body); color: var(--ink-2); }
 .ticker__red { font: 500 10px var(--font-mono); letter-spacing: 0.10em; color: var(--adm-primary); }
