@@ -56,7 +56,7 @@ The only separate codebase is **ALIVE-Player** (Kotlin Android TV APK).
 | Styling | Tailwind CSS + shadcn/ui (Radix primitives) |
 | Animations | Framer Motion 11 (enter animations only — no loops) |
 | Auth | Auth.js v5 (`next-auth@beta`) + Prisma adapter. Store partners: phone+password Credentials. Brands/admin: email magic-link. |
-| DB | Prisma 6 + Neon PostgreSQL. Pooled `DATABASE_URL` for runtime; direct `DATABASE_DIRECT_URL` for migrations. |
+| DB | Prisma 6 + Neon PostgreSQL. Pooled `DATABASE_URL` for runtime; direct `DATABASE_URL_UNPOOLED` for migrations. Both are Neon-Vercel integration-managed — never hand-set them. |
 | Cache | Upstash Redis — lazy `getRedis()` pattern only, never module-level |
 | Media | Cloudflare R2 via AWS SDK. Browser → server-side proxy (`/api/admin/r2-upload`) → R2. Never direct browser PUT (CORS). |
 | Payments | Razorpay (brand campaigns) |
@@ -245,7 +245,7 @@ campaigns:all  → Campaign[]
 
 ```
 DATABASE_URL                    # Neon pooled (runtime)
-DATABASE_DIRECT_URL             # Neon direct (migrations)
+DATABASE_URL_UNPOOLED           # Neon direct (migrations) — integration-managed
 UPSTASH_REDIS_REST_URL
 UPSTASH_REDIS_REST_TOKEN
 NEXT_PUBLIC_RAZORPAY_KEY_ID

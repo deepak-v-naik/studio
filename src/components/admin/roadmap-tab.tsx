@@ -40,7 +40,7 @@ Production: wearealive.in (Vercel auto-deploy from main)
 - Next.js 15 App Router, React 18.3.1, TypeScript
 - Tailwind CSS + shadcn/ui (Radix primitives)
 - Framer Motion 11 (enter animations only — no loops)
-- Prisma 6 + Neon PostgreSQL (pooled DATABASE_URL at runtime, direct DATABASE_DIRECT_URL for migrations)
+- Prisma 6 + Neon PostgreSQL (pooled DATABASE_URL at runtime, direct DATABASE_URL_UNPOOLED for migrations)
 - Upstash Redis (lazy getRedis() pattern — never module-level)
 - Cloudflare R2 via AWS SDK (signed PUT for uploads — never proxy through Next.js)
 - Genkit + Google AI (Gemini 2.5 Flash) for AI features
@@ -654,8 +654,8 @@ Task: Build automated GST invoice generation.
   {
     id: 'infra-postgres', cluster: 'Data & Infra', label: 'PostgreSQL / Neon', sub: 'Primary database',
     status: 'built', critical: true,
-    description: 'Neon serverless Postgres. Pooled DATABASE_URL for Vercel runtime, direct DATABASE_DIRECT_URL for migrations. Prisma 6 ORM. 15+ models covering all platform entities.',
-    notes: ['Two connection strings required: DATABASE_URL (pooled, .c-7 in host) + DATABASE_DIRECT_URL (direct)', 'Run migrations: npx prisma migrate dev --name description (dev) or npx prisma migrate deploy (prod)', 'Prisma studio: npx prisma studio (opens browser UI on localhost:5555)'],
+    description: 'Neon serverless Postgres. Pooled DATABASE_URL for Vercel runtime, direct DATABASE_URL_UNPOOLED for migrations. Prisma 6 ORM. 15+ models covering all platform entities.',
+    notes: ['Two connection strings, both managed by the Neon-Vercel integration: DATABASE_URL (pooled, -pooler in host) + DATABASE_URL_UNPOOLED (direct). Never hand-set these — a hand-set direct URL went stale and broke deploys (P1001, 2026-08-26).', 'Run migrations: npx prisma migrate dev --name description (dev) or npx prisma migrate deploy (prod)', 'Prisma studio: npx prisma studio (opens browser UI on localhost:5555)'],
     claudePrompt: `Context: Neon PostgreSQL + Prisma 6. Schema at prisma/schema.prisma. Migration history in prisma/migrations/.
 
 Task: [DESCRIBE YOUR SCHEMA CHANGE — e.g. "Add a 'StoreMetric' model that stores weekly aggregate stats per store: weekStart Date, impressionsDelivered Int, screenUptimePct Float, revenueEarned Int. Add index on storeId+weekStart. Create migration."]
@@ -708,7 +708,7 @@ After any schema change:
     id: 'infra-vercel', cluster: 'Data & Infra', label: 'Vercel Deploy', sub: 'Auto-deploy on push to main',
     status: 'built',
     description: 'Push to main → auto-deploy to Vercel production at wearealive.in. Feature branch: claude/build-alive-advertising-platform-tlG96. prisma migrate deploy runs in build script.',
-    notes: ['Required env vars in Vercel: DATABASE_URL, DATABASE_DIRECT_URL, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_BASE, AUTH_SECRET, ADMIN_PASSWORD, NEXT_PUBLIC_RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET'],
+    notes: ['Required env vars in Vercel: DATABASE_URL, DATABASE_URL_UNPOOLED, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_BASE, AUTH_SECRET, ADMIN_PASSWORD, NEXT_PUBLIC_RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET'],
     claudePrompt: `Context: Vercel deployment at wearealive.in. Auto-deploys from main branch. Feature work happens on branch claude/build-alive-advertising-platform-tlG96.
 
 Task: [DESCRIBE YOUR INFRA CHANGE — e.g. "Add a /api/cron/monthly-payouts endpoint (new Vercel cron) that runs on the 1st of each month to create StorePayment records for all live stores. Configure in vercel.json crons array."]
