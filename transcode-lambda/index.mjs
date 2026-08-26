@@ -105,11 +105,15 @@ export const handler = async (event) => {
     // -profile:v main -level 4.1: the actual fix — covers up to 1920x1080(or portrait
     //   equivalent)@30fps and is what budget Realtek/Amlogic/Allwinner decoders expect.
     // -vf scale=...:force_original_aspect_ratio=decrease: never upscale, cap at 1080p.
+    //   The trailing crop rounds both dimensions down to even — aspect-fit can yield an
+    //   odd width on portrait sources (e.g. 1440x2732 → 569x1080) and libx264/x265
+    //   reject odd dimensions in yuv420p. (force_divisible_by needs a newer ffmpeg than
+    //   the pinned static build.)
     // -pix_fmt yuv420p: 8-bit only — 10-bit/HDR isn't supported on these chips.
     await run(ffmpegPath.path, [
       '-y', '-i', tmpIn,
       '-c:v', 'libx264', '-profile:v', 'main', '-level', '4.1', '-pix_fmt', 'yuv420p',
-      '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+      '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2",
       '-r', '30', '-b:v', '6M', '-maxrate', '8M', '-bufsize', '12M',
       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
       tmpOut,
@@ -143,7 +147,7 @@ export const handler = async (event) => {
       await run(ffmpegPath.path, [
         '-y', '-i', tmpIn,
         '-c:v', 'libx265', '-tag:v', 'hvc1', '-profile:v', 'main', '-pix_fmt', 'yuv420p',
-        '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+        '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2",
         '-r', '30', '-b:v', '3M', '-maxrate', '4M', '-bufsize', '6M',
         '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
         tmpOutHevc,

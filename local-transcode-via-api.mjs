@@ -98,7 +98,7 @@ async function ffmpegH264(inFile, outFile) {
   await run('ffmpeg', [
     '-y', '-i', inFile,
     '-c:v', 'libx264', '-profile:v', 'main', '-level', '4.1', '-pix_fmt', 'yuv420p',
-    '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+    '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2",
     '-r', '30', '-b:v', '6M', '-maxrate', '8M', '-bufsize', '12M',
     '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
     outFile,
@@ -109,7 +109,7 @@ async function ffmpegHevc(inFile, outFile) {
   await run('ffmpeg', [
     '-y', '-i', inFile,
     '-c:v', 'libx265', '-tag:v', 'hvc1', '-profile:v', 'main', '-pix_fmt', 'yuv420p',
-    '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+    '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2",
     '-r', '30', '-b:v', '3M', '-maxrate', '4M', '-bufsize', '6M',
     '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
     outFile,
