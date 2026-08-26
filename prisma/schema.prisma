@@ -7,9 +7,11 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
-  // directUrl removed — Neon pooler (DATABASE_URL) handles both runtime and
-  // migrations. Set DATABASE_DIRECT_URL locally for npx prisma migrate dev.
+  url       = env("DATABASE_URL")
+  // Migrations must bypass PgBouncer: advisory locks + multi-statement DDL are
+  // unreliable through transaction pooling, and a half-applied migration leaves
+  // a failed _prisma_migrations row that blocks every later deploy (P3009).
+  directUrl = env("DATABASE_DIRECT_URL")
 }
 
 // ─── Auth (Auth.js compatible) ───────────────────────────────────────────────
