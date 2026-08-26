@@ -9,13 +9,24 @@ type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoic
 const DISMISSED_KEY = 'alive_pwa_dismissed';
 
 export function PwaRegister() {
-  // Register service worker
+  // Register service worker — production only. In dev the SW's cache-first on
+  // /_next/static/ is poison: Turbopack reuses chunk URLs with different
+  // content across rebuilds, so a cached chunk from an earlier run crashes the
+  // page with "module factory is not available" until the SW is cleared by
+  // hand. Prod chunk URLs are content-hashed, so caching is safe there.
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker
-        .register('/sw.js', { scope: '/' })
+    if (!('serviceWorker' in navigator)) return;
+    if (process.env.NODE_ENV !== 'production') {
+      // Also clean up any worker left behind by a previous prod visit or an
+      // older build of this component on localhost.
+      navigator.serviceWorker.getRegistrations()
+        .then((regs) => regs.forEach((r) => { void r.unregister(); }))
         .catch(() => { /* non-fatal */ });
+      return;
     }
+    navigator.serviceWorker
+      .register('/sw.js', { scope: '/' })
+      .catch(() => { /* non-fatal */ });
   }, []);
 
   return null;

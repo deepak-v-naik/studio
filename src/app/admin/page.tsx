@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Loader2, Trash2, Upload, ImageIcon, Store, BarChart3, FileImage,
   Phone, MapPin, CheckCircle2, Clock, X, MessageCircle, ExternalLink,
@@ -353,6 +353,9 @@ const STAGE_COLORS: Record<string, string> = {
   digitally_onboarded: 'bg-indigo-50 text-indigo-600', live: 'bg-green-50 text-green-700',
   rejected: 'bg-red-50 text-red-500',
 };
+const PAYOUT_LABELS: Record<string, string> = {
+  pending_setup: 'Setup pending', ready: 'Ready', paid: 'Paid', on_hold: 'On hold',
+};
 
 async function openAsPartner(s: StoreReg) {
   // Open the tab synchronously (inside the click gesture) so popup blockers
@@ -614,56 +617,84 @@ function StoresPanel() {
       {!filtered.length ? (
         <p className="text-sm text-muted-foreground text-center py-10">{search ? 'No stores match.' : 'No store registrations yet.'}</p>
       ) : (
-        <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-2">
+        <motion.div variants={stagger} initial="hidden" animate="show" className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
           {filtered.map((s) => {
             const stage      = s.onboardingStage ?? 'new';
             const isRejected = stage === 'rejected';
             const isExpanded = expanded === s.id;
             const phone      = s.phone || s.whatsapp;
             const waNum      = (phone ?? '').replace(/\D/g, '').slice(-10);
+            // GPS-verified shop photo shown as a clean banner — coordinates and
+            // capture metadata stay inside the Edit section, photo only here.
+            const photo      = s.shopPhotoUrl || s.installPhotoUrl;
             return (
-              <motion.div key={s.id} variants={fadeIn} className={`rounded-xl border bg-card ${isRejected ? 'border-red-200 opacity-70' : 'border-border'}`}>
-                {/* Top row — always visible */}
-                <div className="flex items-start gap-3 p-4">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-bold text-sm ${isRejected ? 'bg-red-50 text-red-400' : 'bg-primary/10 text-primary'}`}>
-                    {s.storeName[0]?.toUpperCase()}
+              <motion.div
+                key={s.id}
+                variants={fadeIn}
+                className={`group overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-lg ${isRejected ? 'border-red-200 opacity-70' : 'border-border'} ${isExpanded ? 'sm:col-span-2' : ''}`}
+              >
+                {/* Photo banner */}
+                <div className="relative h-44 w-full overflow-hidden bg-muted">
+                  {photo ? (
+                    <a href={photo} target="_blank" rel="noreferrer" title="Open full-size photo">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={photo} alt={`${s.storeName} — shop photo`} loading="lazy"
+                        className="h-44 w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]" />
+                    </a>
+                  ) : (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-primary/10 via-muted/60 to-muted">
+                      <span className={`flex h-14 w-14 items-center justify-center rounded-2xl text-2xl font-black ${isRejected ? 'bg-red-50 text-red-400' : 'bg-primary/10 text-primary'}`}>
+                        {s.storeName[0]?.toUpperCase()}
+                      </span>
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">No shop photo yet</span>
+                    </div>
+                  )}
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/40 to-transparent" />
+                  <span className={`absolute left-3 top-3 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-sm ${STAGE_COLORS[stage] ?? 'bg-gray-100 text-gray-500'}`}>
+                    {STAGE_LABELS[stage] ?? stage}
+                  </span>
+                  <div className="absolute right-3 top-3 flex items-center gap-1.5">
+                    {s.tier === 'premium' && (
+                      <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 shadow-sm">
+                        <Star className="h-2.5 w-2.5" /> Premium
+                      </span>
+                    )}
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-sm ${(s.deviceCount ?? 0) > 0 ? 'bg-green-50 text-green-700' : 'bg-white/90 text-gray-500'}`}>
+                      <Tv2 className="h-2.5 w-2.5" /> {s.deviceCount ?? 0} screen{(s.deviceCount ?? 0) !== 1 ? 's' : ''}
+                    </span>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2 flex-wrap">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                          {s.storeName}
-                          {s.tier === 'premium' && (
-                            <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                              <Star className="h-2.5 w-2.5" /> Premium
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{s.ownerName}</p>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {s.tier === 'premium' && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">
-                            ₹{Math.round((s.monthlyCompensationPaise ?? 100000) / 100).toLocaleString('en-IN')}/mo
-                          </span>
-                        )}
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${STAGE_COLORS[stage] ?? 'bg-gray-100 text-gray-500'}`}>
-                          {STAGE_LABELS[stage] ?? stage}
-                        </span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${(s.deviceCount ?? 0) > 0 ? 'bg-green-50 text-green-700' : 'bg-muted text-muted-foreground'}`}>
-                          {s.deviceCount ?? 0} screen{(s.deviceCount ?? 0) !== 1 ? 's' : ''}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground/50">{fmtDate(s.createdAt)}</span>
-                      </div>
-                    </div>
+                </div>
 
-                    <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{phone ? `+91 ${waNum}` : '—'}</span>
-                      <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{[s.locality, s.city].filter(Boolean).join(', ') || '—'}</span>
-                      {s.referralCode && <span className="flex items-center gap-1 font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">ref: {s.referralCode}</span>}
+                <div className="p-4">
+                  {/* Name + owner */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-[15px] font-bold text-foreground">{s.storeName}</p>
+                      <p className="truncate text-xs text-muted-foreground">{s.ownerName}</p>
                     </div>
+                    <span className="shrink-0 pt-0.5 text-[10px] text-muted-foreground/50">{fmtDate(s.createdAt)}</span>
+                  </div>
 
-                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {/* At-a-glance data */}
+                  <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border/70 bg-border/40 sm:grid-cols-4">
+                    {[
+                      { label: 'Phone',    value: phone ? `+91 ${waNum}` : '—' },
+                      { label: 'Area',     value: [s.locality, s.city].filter(Boolean).join(', ') || '—' },
+                      { label: 'Payout',   value: PAYOUT_LABELS[s.payoutStatus ?? 'pending_setup'] ?? s.payoutStatus },
+                      s.tier === 'premium'
+                        ? { label: 'Comp',   value: `₹${Math.round((s.monthlyCompensationPaise ?? 100000) / 100).toLocaleString('en-IN')}/mo` }
+                        : s.liveAt
+                          ? { label: 'Live since', value: fmtDate(s.liveAt) }
+                          : { label: 'Referral',   value: s.referralCode || '—' },
+                    ].map((cell) => (
+                      <div key={cell.label} className="bg-card px-2.5 py-2 min-w-0">
+                        <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/60">{cell.label}</p>
+                        <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground" title={String(cell.value)}>{cell.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-1.5">
                       {waNum.length === 10 && (
                         <a
                           href={`https://wa.me/91${waNum}?text=${encodeURIComponent(`Hi ${s.ownerName}, this is the ALIVE team regarding your store ${s.storeName}.`)}`}
@@ -697,7 +728,6 @@ function StoresPanel() {
                       </button>
                     </div>
                   </div>
-                </div>
 
                 {isExpanded && (
                   <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
@@ -1607,12 +1637,14 @@ function Dashboard() {
         <Ticker stats={tickerStats} />
 
         <div className="page">
-          <AnimatePresence mode="wait">
+          {/* No AnimatePresence here: mode="wait" deadlocks under React Strict
+              Mode's double-mount in dev (exit never completes, so the next tab
+              never mounts — the sidebar highlights but content stays frozen).
+              A keyed motion.div gives the same enter fade with instant swap. */}
             <motion.div
               key={tab}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
               transition={{ duration: 0.18 }}
             >
               {tab === 'overview'   && <OverviewPanel onNav={handleNav} />}
@@ -1644,7 +1676,6 @@ function Dashboard() {
               {tab === 'products'   && <ProductsTab adminPw={adminPw} />}
               {tab === 'roadmap'    && <RoadmapTab />}
             </motion.div>
-          </AnimatePresence>
         </div>
       </main>
 
