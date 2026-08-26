@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import {
   Loader2, Tv2, Wifi, WifiOff, Clock, AlertCircle, Smartphone, Download, QrCode,
   ChevronDown, ChevronUp, Copy, Check, Play, CalendarDays, Pencil, Stethoscope, X,
@@ -629,6 +630,60 @@ function QualityToggle({ device, onSave }: { device: Device; onSave: (d: Device)
   );
 }
 
+// ─── Card chrome ─────────────────────────────────────────────────────────────
+// A screen's health is the thing you scan a long list for, so it drives a
+// coloured rail down the card's left edge — readable at a glance without the
+// neon/glow the house style rules out (see CLAUDE.md → Design Conventions).
+
+// Enter animation only — the house style bans looping/attention-seeking motion.
+const listStagger = { hidden: {}, show: { transition: { staggerChildren: 0.035 } } };
+const cardIn = {
+  hidden: { opacity: 0, y: 8 },
+  show:   { opacity: 1, y: 0, transition: { duration: 0.26, ease: [0.22, 1, 0.36, 1] as const } },
+};
+
+const STATUS_RAIL: Record<string, string> = {
+  ONLINE:  'bg-green-500',
+  OFFLINE: 'bg-red-500',
+  PENDING: 'bg-amber-400',
+};
+
+/** Icon-only card action. Stays legible at rest, takes its accent on hover. */
+function CardAction({ icon: Icon, label, onClick, tone = 'default' }: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  onClick: () => void;
+  tone?: 'default' | 'primary' | 'danger';
+}) {
+  const hover = tone === 'danger'
+    ? 'hover:border-destructive/40 hover:text-destructive hover:bg-destructive/5'
+    : 'hover:border-primary/40 hover:text-primary hover:bg-primary/5';
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`flex h-7 w-7 items-center justify-center rounded-lg border border-border text-muted-foreground transition-all active:scale-95 ${hover}`}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+/** Uptime as a bar — a number alone doesn't show how bad "91%" really is. */
+function UptimeBar({ pct }: { pct: number }) {
+  const tone = pct >= 98 ? 'bg-green-500' : pct >= 90 ? 'bg-amber-400' : 'bg-red-500';
+  const text = pct >= 98 ? 'text-green-600' : pct >= 90 ? 'text-amber-600' : 'text-red-500';
+  return (
+    <div className="flex items-center gap-1.5" title={`${pct.toFixed(1)}% uptime over the last 30 days`}>
+      <div className="h-1 w-10 overflow-hidden rounded-full bg-muted">
+        <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} />
+      </div>
+      <span className={`text-[10px] font-semibold tabular-nums ${text}`}>{pct.toFixed(1)}%</span>
+    </div>
+  );
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 // Human-friendly label for a device — avoids exposing raw hardware IDs in the UI.
 // Examples: "Sharma Stores · Screen #b434" or "Screen #b434" if not linked.
@@ -1124,8 +1179,12 @@ export default function ScreensTab() {
                   {devices.map((d) => {
                     const StatusIcon = STATUS_ICONS[d.status];
                     return (
-                      <tr key={d.id} className={`border-b border-border/60 last:border-0 hover:bg-muted/20 ${selected.has(d.id) ? 'bg-primary/5' : ''}`}>
-                        <td className="px-3 py-2"><input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} className="h-3 w-3 rounded accent-primary cursor-pointer" /></td>
+                      <tr key={d.id} className={`border-b border-border/60 last:border-0 transition-colors hover:bg-muted/20 ${selected.has(d.id) ? 'bg-primary/5' : ''}`}>
+                        <td className="relative px-3 py-2">
+                          {/* Same health rail as the card view, so the two read alike */}
+                          <span aria-hidden className={`absolute inset-y-0 left-0 w-[3px] ${STATUS_RAIL[d.status] ?? 'bg-muted'}`} />
+                          <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} className="h-3 w-3 rounded accent-primary cursor-pointer" />
+                        </td>
                         <td className="px-3 py-2 font-semibold text-foreground max-w-[120px] truncate">{d.storeName}</td>
                         <td className="px-3 py-2 text-muted-foreground max-w-[120px]">
                           {d.linkedStoreName ? (
@@ -1152,7 +1211,7 @@ export default function ScreensTab() {
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">{d.lastSeen ? timeSince(d.lastSeen) : 'Never'}</td>
                         <td className="px-3 py-2 text-right">
-                          <button onClick={() => setDiagId(d.id)} className="rounded-lg border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
+                          <button onClick={() => setDiagId(d.id)} className="rounded-lg border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-primary active:scale-95">
                             Details
                           </button>
                         </td>
@@ -1164,14 +1223,16 @@ export default function ScreensTab() {
             </div>
           ) : (
             /* ── Comfortable card view ──────────────────────────────── */
-            <div className="space-y-2">
+            <motion.div className="space-y-2" variants={listStagger} initial="hidden" animate="show">
               {devices.map((d) => {
                 const StatusIcon = STATUS_ICONS[d.status];
                 const sched = d.currentSchedule;
                 return (
-                  <div key={d.id} className={`rounded-xl border bg-card overflow-hidden hover:border-primary/30 transition-colors ${selected.has(d.id) ? 'border-primary/40 bg-primary/5' : 'border-border'}`}>
+                  <motion.div key={d.id} variants={cardIn} className={`group relative rounded-xl border bg-card overflow-hidden transition-colors hover:border-primary/30 ${selected.has(d.id) ? 'border-primary/40 bg-primary/5' : 'border-border'}`}>
+                    {/* Health rail — status you can scan without reading */}
+                    <span aria-hidden className={`absolute inset-y-0 left-0 w-[3px] ${STATUS_RAIL[d.status] ?? 'bg-muted'}`} />
                     {/* Top row */}
-                    <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border/60">
+                    <div className="flex items-center justify-between gap-3 pl-5 pr-4 py-3 border-b border-border/60">
                       <div className="flex items-center gap-3 min-w-0">
                         <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} className="h-3.5 w-3.5 rounded accent-primary cursor-pointer shrink-0" />
                         <Tv2 className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -1199,30 +1260,29 @@ export default function ScreensTab() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => setLinkIds([d.id])} className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
-                          <Link2 className="h-3 w-3" />
-                        </button>
-                        <button onClick={() => setDiagId(d.id)} className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
-                          <Stethoscope className="h-3 w-3" /> Details
-                        </button>
-                        <button onClick={() => doForceSync(d.id)} title="Force this screen to re-fetch its plan on next poll" className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
-                          <RefreshCw className="h-3 w-3" /> Sync
-                        </button>
-                        <button onClick={() => doHealthPing(d.id)} title="Ask the screen to report telemetry right now, instead of waiting for its next heartbeat" className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
-                          <HeartPulse className="h-3 w-3" /> Ping
-                        </button>
-                        <button onClick={() => doReboot(d.id, d.storeName ?? friendlyDeviceLabel(d))} title="Remotely reboot this screen (device-owner installs only)" className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:border-destructive/40 hover:text-destructive transition-colors">
-                          <Power className="h-3 w-3" /> Reboot
-                        </button>
-                        <Badge variant={STATUS_BADGE[d.status]} dot className="text-[10px] py-0.5 px-2 font-bold">
-                          <StatusIcon className="h-2.5 w-2.5" />{d.status}
-                        </Badge>
-                        {d.uptimePct != null && (
-                          <span className={`text-[10px] font-semibold ${d.uptimePct >= 98 ? 'text-green-600' : d.uptimePct >= 90 ? 'text-yellow-600' : 'text-red-500'}`}>
-                            {d.uptimePct.toFixed(1)}% up
-                          </span>
-                        )}
+                      <div className="flex items-center gap-3 shrink-0">
+                        {/* Health first — it's what you came to check */}
+                        <div className="hidden sm:flex flex-col items-end gap-1">
+                          <Badge variant={STATUS_BADGE[d.status]} dot className="text-[10px] py-0.5 px-2 font-bold">
+                            <StatusIcon className="h-2.5 w-2.5" />{d.status}
+                          </Badge>
+                          {d.uptimePct != null && <UptimeBar pct={d.uptimePct} />}
+                        </div>
+                        {/* Actions: one grouped cluster instead of five competing pills.
+                            Details stays labelled — it's the primary action. */}
+                        <div className="flex items-center gap-1">
+                          <CardAction icon={Link2}     label="Link to a store"        onClick={() => setLinkIds([d.id])} />
+                          <CardAction icon={RefreshCw} label="Force re-fetch of the plan on next poll" onClick={() => doForceSync(d.id)} />
+                          <CardAction icon={HeartPulse} label="Ask the screen to report telemetry now" onClick={() => doHealthPing(d.id)} />
+                          <CardAction icon={Power}     label="Remotely reboot this screen (device-owner installs only)" tone="danger"
+                            onClick={() => doReboot(d.id, d.storeName ?? friendlyDeviceLabel(d))} />
+                          <button
+                            onClick={() => setDiagId(d.id)}
+                            className="ml-1 flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-muted-foreground transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-primary active:scale-95"
+                          >
+                            <Stethoscope className="h-3 w-3" /> Details
+                          </button>
+                        </div>
                       </div>
                     </div>
                     {/* Bottom row */}
@@ -1252,10 +1312,10 @@ export default function ScreensTab() {
                           <ScreenTestButton deviceId={d.id} />
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
-            </div>
+            </motion.div>
           )}
 
           {/* Pagination */}
