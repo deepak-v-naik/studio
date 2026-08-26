@@ -210,9 +210,32 @@ export async function POST(req: NextRequest) {
 
     let chainHash: string | null = lastEvent?.rowHash ?? null;
     let accepted = 0;
+    let duplicates = 0;
+
+    // Re-sent batches are NORMAL, not exceptional: the player keeps proof-of-play in a
+    // local queue and only deletes a row after it sees a 200, so any 200 lost to a
+    // dropped connection — exactly what happens on the flaky links these screens sit on —
+    // makes it send the same events again. The PlayEvent upsert below already absorbs
+    // that (update: {} is a no-op on a duplicate id), but HourlyPop does not: its
+    // increments would fire a second time and silently inflate playCount, totalMs and
+    // campaignIds — the numbers advertisers are billed from.
+    //
+    // So find the ids we already hold, in ONE query per batch, and skip them entirely.
+    // Skipping is safe for the hash chain too: an event that is already stored was
+    // chained when it was first accepted, and re-chaining it here would rewrite history.
+    const batchIds = batch.map((e) => e.id).filter((id): id is string => !!id);
+    const alreadyStored = new Set(
+      batchIds.length
+        ? (await db.playEvent.findMany({
+            where:  { id: { in: batchIds } },
+            select: { id: true },
+          }).catch(() => [])).map((r) => r.id)
+        : [],
+    );
 
     for (const ev of batch) {
       if (!ev.id || !ev.mediaId || !ev.startedAt || !ev.endedAt) continue;
+      if (alreadyStored.has(ev.id)) { duplicates++; continue; }
       try {
         const rowHash = computeRowHash(
           ev.id, device.id, ev.mediaId,
@@ -281,7 +304,13 @@ export async function POST(req: NextRequest) {
     // strand the alert OPEN and silence the device for good.
     if (wasOffline) after(() => resolveOfflineAlerts(device.id));
 
-    const envelope = await respond({ accepted }, { route, request: { correlationId, eventsCount: batch.length }, outcome: 'success', policyFlags: [], startedAtMs });
+    // `duplicates` is reported so a re-sent backlog is visible rather than silent — a
+    // device stuck re-sending the same events (a queue that never drains) otherwise
+    // looks identical to a healthy one, since both return 200.
+    const envelope = await respond(
+      { accepted, ...(duplicates ? { duplicates } : {}) },
+      { route, request: { correlationId, eventsCount: batch.length }, outcome: 'success', policyFlags: duplicates ? ['had_duplicates'] : [], startedAtMs },
+    );
     return NextResponse.json(envelope);
   } catch (e) {
     const error = e as Error;
