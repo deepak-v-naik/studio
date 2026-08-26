@@ -22,6 +22,7 @@ export type Device = {
   lastPlayAt?:      string | null;
   groupName?:       string | null;
   orientation?:     'LANDSCAPE' | 'PORTRAIT' | 'PORTRAIT_FLIPPED' | 'AUTO' | null;
+  playsOriginal?:   boolean;   // serve original uploads instead of the safe H.264 rendition
   uptimePct?:       number | null;
   claimedAt:        string;
   pairedAt?:        string | null;
@@ -172,7 +173,7 @@ export const getDevices = (params?: Record<string, string>) => {
   return apiFetch<DevicesResponse>(`/api/devices${qs}`);
 };
 
-export const updateDevice = (id: string, body: { storeName?: string; groupName?: string; storeId?: string | null; orientation?: string }) =>
+export const updateDevice = (id: string, body: { storeName?: string; groupName?: string; storeId?: string | null; orientation?: string; playsOriginal?: boolean }) =>
   apiFetch<{ device: Device }>(`/api/devices/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
   .then((r) => r.device);
 

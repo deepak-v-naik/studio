@@ -31,28 +31,43 @@
 //   Ephemeral storage (/tmp): >= 2048 MB (holds input + output simultaneously)
 //
 // Env vars:
-//   R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_BASE
+//   STUDIO_CALLBACK_URL        — .../api/admin/transcode-callback (presign URL derived from it)
 //   TRANSCODE_CALLBACK_SECRET  — shared secret, sent as x-transcode-secret header
+//
+// No R2 credentials here — they're Vercel-Sensitive (write-only) env vars that can never
+// be exported to configure this function, which is how it once shipped with literal
+// "[SENSITIVE]" strings in its env and failed every upload with "Invalid URL". Uploads
+// go through the studio's /api/admin/transcode-presign instead (same shared secret);
+// the studio runtime, which holds the real creds, signs each PUT.
 
 import { randomUUID, createHash } from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { writeFile, readFile, unlink } from 'fs/promises';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import ffprobePath from '@ffprobe-installer/ffprobe';
 
 const run = promisify(execFile);
 
-function r2Client() {
-  return new S3Client({
-    region: 'auto',
-    endpoint: process.env.R2_ENDPOINT,
-    credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY_ID,
-      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+async function uploadViaPresign(objectKey, bytes, contentType) {
+  const callbackUrl = process.env.STUDIO_CALLBACK_URL;
+  if (!callbackUrl) throw new Error('STUDIO_CALLBACK_URL not set');
+  const presignUrl = callbackUrl.replace(/\/transcode-callback\/?$/, '/transcode-presign');
+  if (presignUrl === callbackUrl) throw new Error('STUDIO_CALLBACK_URL does not end in /transcode-callback');
+  const presign = await fetch(presignUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-transcode-secret': process.env.TRANSCODE_CALLBACK_SECRET ?? '',
     },
+    body: JSON.stringify({ objectKey, contentType }),
   });
+  if (!presign.ok) throw new Error(`presign failed: HTTP ${presign.status} ${await presign.text().catch(() => '')}`);
+  const { uploadUrl } = await presign.json();
+  if (!uploadUrl) throw new Error('presign response missing uploadUrl');
+  // The presign signature covers Content-Type — the PUT must send the same value.
+  const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'content-type': contentType }, body: bytes });
+  if (!put.ok) throw new Error(`R2 PUT failed: HTTP ${put.status} ${await put.text().catch(() => '')}`);
 }
 
 async function callback(body) {
@@ -115,12 +130,7 @@ export const handler = async (event) => {
     const outBytes = await readFile(tmpOut);
     const md5 = createHash('md5').update(outBytes).digest('hex');
     const objectKey = `content/${contentId}-transcoded-${Date.now()}.mp4`;
-    await r2Client().send(new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET,
-      Key: objectKey,
-      Body: outBytes,
-      ContentType: 'video/mp4',
-    }));
+    await uploadViaPresign(objectKey, outBytes, 'video/mp4');
 
     // 5. Best-effort second rendition: same content re-encoded as HEVC/H.265, at
     //    roughly half the H.264 bitrate (HEVC is ~2x more efficient at equivalent
@@ -141,12 +151,7 @@ export const handler = async (event) => {
       const hevcBytes = await readFile(tmpOutHevc);
       const hevcMd5 = createHash('md5').update(hevcBytes).digest('hex');
       const hevcObjectKey = `content/${contentId}-transcoded-hevc-${Date.now()}.mp4`;
-      await r2Client().send(new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET,
-        Key: hevcObjectKey,
-        Body: hevcBytes,
-        ContentType: 'video/mp4',
-      }));
+      await uploadViaPresign(hevcObjectKey, hevcBytes, 'video/mp4');
       hevcResult = { hevcObjectKey, hevcMd5, hevcSizeBytes: hevcBytes.length };
     } catch (err) {
       console.error('HEVC transcode failed (non-fatal, H.264 rendition still used):', err);

@@ -21,7 +21,12 @@ export async function DELETE(
     if (!content) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     await db.content.delete({ where: { id } });
-    await deleteObject(content.objectKey).catch(() => {}); // best-effort R2 delete
+    // Best-effort R2 delete — current rendition, preserved original, HEVC rendition.
+    await deleteObject(content.objectKey).catch(() => {});
+    if (content.originalObjectKey && content.originalObjectKey !== content.objectKey) {
+      await deleteObject(content.originalObjectKey).catch(() => {});
+    }
+    if (content.hevcObjectKey) await deleteObject(content.hevcObjectKey).catch(() => {});
 
     return NextResponse.json({ ok: true });
   } catch (e) {

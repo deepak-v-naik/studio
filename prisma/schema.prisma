@@ -323,6 +323,10 @@ model Device {
   freeStorageMb    Int? // available storage in MB (last reported)
   androidVersion   String? // e.g. "13"
   appVersion       String? // ALIVE Player app version, e.g. "1.4.2"
+  // Serve original uploads instead of the safe H.264 rendition. Set for panels whose
+  // hardware decoder handles high-bitrate/High-Profile sources (e.g. the 50" Foxskys);
+  // leave off for budget SoCs that need the transcoded rendition to play at all.
+  playsOriginal    Boolean           @default(false)
   // Freeze diagnostics: lastSeen proves the network/process is alive, playbackAliveAt
   // proves content is actually still advancing. lastSeen fresh + playbackAliveAt stale
   // == frozen screen, which is otherwise indistinguishable from a healthy one.
@@ -543,6 +547,16 @@ model Content {
   // image or not yet queued; 'pending' while the transcode Lambda is running.
   transcodeStatus String? // null | 'pending' | 'done' | 'error'
   transcodeError  String?
+
+  // Full-quality original, preserved when the transcode callback overwrites objectKey
+  // with the safe H.264 rendition (same overwrite the pipeline always did — kept that
+  // way so a Vercel rollback to pre-rendition code still serves the safe file, never a
+  // raw high-bitrate original a budget panel can't decode). The plan API serves this
+  // to Device.playsOriginal screens only. Null = original unknown (legacy rows whose
+  // objectKey was overwritten before this column existed, or not yet transcoded).
+  originalObjectKey String? @unique
+  originalMd5       String?
+  originalSizeBytes BigInt?
 
   // Optional second rendition, same content re-encoded as HEVC/H.265. Populated
   // best-effort by the transcode Lambda alongside the H.264 rendition above. Devices

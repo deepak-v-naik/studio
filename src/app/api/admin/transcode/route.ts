@@ -23,7 +23,9 @@ export async function POST(req: NextRequest) {
     if (!content) return NextResponse.json({ error: 'Content not found' }, { status: 404 });
     if (content.type !== 'VIDEO') return NextResponse.json({ error: 'Only video content can be transcoded' }, { status: 400 });
 
-    await triggerTranscode(contentId, publicUrl(content.objectKey));
+    // Transcode from the preserved original when there is one — re-encoding the
+    // rendition would stack generation loss.
+    await triggerTranscode(contentId, publicUrl(content.originalObjectKey ?? content.objectKey));
 
     try {
       await db.content.update({

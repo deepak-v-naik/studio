@@ -593,6 +593,42 @@ function OrientationSelect({ device, onSave }: { device: Device; onSave: (d: Dev
   );
 }
 
+// ─── Playback quality toggle ─────────────────────────────────────────────────
+// Serve original uploads vs the safe H.264 rendition. On = capable panel (e.g. the
+// 50" Foxskys) keeps full-quality originals; off (default) = budget SoC gets the
+// transcoded rendition it can actually decode.
+function QualityToggle({ device, onSave }: { device: Device; onSave: (d: Device) => void }) {
+  const [saving, setSaving] = useState(false);
+  const on = !!device.playsOriginal;
+
+  const toggle = async () => {
+    // Flipping this changes the md5 of every transcoded video in this screen's plan at
+    // once — the player re-downloads them all and may stream (or stall) until the
+    // downloads land, so it must never feel like a cosmetic toggle.
+    const warning = on
+      ? 'Switch back to safe quality? This screen will re-download the transcoded copies of its videos and may play degraded until the downloads finish.'
+      : 'Serve full-quality originals? This screen will re-download ALL its videos at original size (can be hundreds of MB) and may stutter or stream until the downloads finish. Best done during off-hours, and only on panels that decode Full HD smoothly.';
+    if (!window.confirm(warning)) return;
+    setSaving(true);
+    try {
+      const updated = await updateDevice(device.id, { playsOriginal: !on });
+      onSave(updated);
+    } catch { /* ignore */ }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={saving}
+      title={on ? 'Playing original uploads at full quality — switch off if this screen stutters on videos' : 'Playing the safe transcoded rendition — switch on only for panels that decode Full HD originals smoothly'}
+      className={`mt-1 flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-semibold transition-all disabled:opacity-50 ${on ? 'border-primary/40 text-primary bg-primary/5' : 'border-border text-muted-foreground hover:text-foreground'}`}
+    >
+      {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : (on ? 'Full quality' : 'Safe quality')}
+    </button>
+  );
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 // Human-friendly label for a device — avoids exposing raw hardware IDs in the UI.
 // Examples: "Sharma Stores · Screen #b434" or "Screen #b434" if not linked.
@@ -1101,6 +1137,7 @@ export default function ScreensTab() {
                         <td className="px-3 py-2 text-muted-foreground">{d.groupName ?? '—'}</td>
                         <td className="px-3 py-2">
                           <OrientationSelect device={d} onSave={(updated) => setDevices((prev) => prev.map((x) => x.id === updated.id ? { ...x, orientation: updated.orientation } : x))} />
+                          <QualityToggle device={d} onSave={(updated) => setDevices((prev) => prev.map((x) => x.id === updated.id ? { ...x, playsOriginal: updated.playsOriginal } : x))} />
                           <ScreenTestButton deviceId={d.id} />
                         </td>
                         <td className="px-3 py-2">
@@ -1211,6 +1248,7 @@ export default function ScreensTab() {
                       <div className="px-4 py-2.5">
                         <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1 flex items-center gap-1"><Monitor className="h-2.5 w-2.5" />Orientation</p>
                         <OrientationSelect device={d} onSave={(updated) => setDevices((prev) => prev.map((x) => x.id === updated.id ? { ...x, orientation: updated.orientation } : x))} />
+                          <QualityToggle device={d} onSave={(updated) => setDevices((prev) => prev.map((x) => x.id === updated.id ? { ...x, playsOriginal: updated.playsOriginal } : x))} />
                           <ScreenTestButton deviceId={d.id} />
                       </div>
                     </div>

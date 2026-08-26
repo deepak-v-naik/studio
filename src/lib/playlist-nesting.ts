@@ -104,6 +104,7 @@ const PLAN_ITEM_SELECT = {
     select: {
       id: true, objectKey: true, md5: true, type: true,
       durationMs: true, hevcObjectKey: true, hevcMd5: true,
+      originalObjectKey: true, originalMd5: true,
     },
   },
 } as const;
@@ -115,17 +116,37 @@ type PlanItemRow = {
   content: {
     id: string; objectKey: string; md5: string; type: string;
     durationMs: number | null; hevcObjectKey: string | null; hevcMd5: string | null;
+    originalObjectKey: string | null; originalMd5: string | null;
   } | null;
 };
 
-function toMediaItem(row: PlanItemRow, order: number): PlanMediaItem | null {
+/**
+ * Rendition choice for one content row. objectKey holds the safe H.264 rendition once
+ * transcoded (the transcode callback overwrites it, as the pipeline always has — which
+ * keeps a Vercel rollback to pre-rendition code fleet-safe); original* preserves the
+ * full-quality upload. Devices default to objectKey (budget SoCs can't decode hot
+ * originals — the reason the transcode pipeline exists); Device.playsOriginal opts a
+ * capable panel into the preserved original when one exists.
+ */
+export function pickRendition(
+  c: { objectKey: string; md5: string; originalObjectKey: string | null; originalMd5: string | null },
+  safeRendition: boolean,
+): { objectKey: string; md5: string } {
+  if (!safeRendition && c.originalObjectKey && c.originalMd5) {
+    return { objectKey: c.originalObjectKey, md5: c.originalMd5 };
+  }
+  return { objectKey: c.objectKey, md5: c.md5 };
+}
+
+function toMediaItem(row: PlanItemRow, order: number, safeRendition: boolean): PlanMediaItem | null {
   const c = row.content;
   if (!c) return null;
+  const chosen = pickRendition(c, safeRendition);
   return {
     contentId:  c.id,
-    objectKey:  c.objectKey,
-    url:        publicUrl(c.objectKey),
-    md5:        c.md5,
+    objectKey:  chosen.objectKey,
+    url:        publicUrl(chosen.objectKey),
+    md5:        chosen.md5,
     type:       c.type,
     durationMs: row.durationMs,
     order,
@@ -141,10 +162,16 @@ function toMediaItem(row: PlanItemRow, order: number): PlanMediaItem | null {
  * loop on bad data). `flat` item `order` is the position in the flattened sequence, so
  * legacy players play the identical order the nesting-aware sequencer produces.
  */
-export async function resolvePlaylistTree(playlistId: string): Promise<{
+export async function resolvePlaylistTree(
+  playlistId: string,
+  opts?: { safeRendition?: boolean },
+): Promise<{
   nested: PlanNestedNode[];
   flat:   PlanMediaItem[];
 }> {
+  // Default to the safe rendition: every caller that doesn't say otherwise is
+  // building a manifest some budget panel may end up playing.
+  const safeRendition = opts?.safeRendition ?? true;
   const flat: PlanMediaItem[] = [];
 
   const build = async (id: string, depth: number, path: Set<string>): Promise<PlanNestedNode[]> => {
@@ -176,7 +203,7 @@ export async function resolvePlaylistTree(playlistId: string): Promise<{
           });
         }
       } else {
-        const item = toMediaItem(row, flat.length);
+        const item = toMediaItem(row, flat.length, safeRendition);
         if (item) {
           nodes.push({ kind: 'content', ...item });
           flat.push(item);

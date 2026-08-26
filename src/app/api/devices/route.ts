@@ -72,6 +72,7 @@ export async function GET(req: NextRequest) {
         lastSeen:     true,
         groupName:    true,
         orientation:  true,
+        playsOriginal: true,
         claimedAt:    true,
         uptimePctD30: true,
         store: {
@@ -157,6 +158,8 @@ export async function GET(req: NextRequest) {
         linkedAt:    d.linkedAt?.toISOString() ?? null,
         linkedStoreName: d.store?.storeName ?? null,
         groupName:   d.groupName,
+        orientation: d.orientation,
+        playsOriginal: d.playsOriginal,
         status:      computedStatus,
         uptimePct:   d.uptimePctD30,
         lastSeen:    d.lastSeen?.toISOString() ?? null,

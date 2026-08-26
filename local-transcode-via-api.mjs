@@ -1,48 +1,41 @@
 #!/usr/bin/env node
-// Local, operator-run equivalent of the transcode Lambda (transcode-lambda/index.mjs).
-// Use it when you want to re-encode content WITHOUT redeploying the Lambda — it does the
-// exact same thing on your machine and leaves the Content row in the identical end-state
-// the Lambda's callback would (objectKey/md5/sizeBytes/durationMs/width/height + optional
-// HEVC rendition, transcodeStatus='done').
+// Variant of local-transcode.mjs for when R2 credentials are unavailable locally.
 //
-// Requirements on the machine you run this from:
-//   - ffmpeg + ffprobe on PATH, built with libx264 AND libx265
-//   - Run from the studio/ directory so node resolves @aws-sdk/client-s3, @prisma/client,
-//     dotenv from studio/node_modules
-//   - REAL R2 creds in .env.production.local (or .env.local): R2_ENDPOINT, R2_ACCESS_KEY_ID,
-//     R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_BASE, and DATABASE_URL. (In the Claude
-//     sandbox these come through redacted as "[SENSITIVE]", which is why this must be run
-//     by you, not the agent.)
+// Why this exists: the R2 keys are stored as *Sensitive* env vars in Vercel, which are
+// write-only — `vercel env pull` returns them as the literal string "[SENSITIVE]", so
+// local-transcode.mjs can never talk to R2 directly from a dev machine. This variant
+// uploads through the production app's own presigned-URL endpoint
+// (GET /api/admin/r2-upload?key=&type= → PUT bytes to the returned uploadUrl), which
+// runs server-side where the real R2 creds live. The only secrets needed here are:
+//   DATABASE_URL    — real value in studio/.env (not Vercel-sensitive)
+//   ADMIN_PASSWORD  — pass in the shell:  ADMIN_PASSWORD='...' node local-transcode-via-api.mjs ...
+//
+// Everything else (targets, ffmpeg settings, Content-row end state) is identical to
+// local-transcode.mjs — see its header for semantics and safety notes.
 //
 // Usage:
-//   node local-transcode.mjs <contentId> [<contentId> ...]     # specific content rows
-//   node local-transcode.mjs --playlist "custom android"        # every video in a playlist (name contains)
-//   node local-transcode.mjs --all-pending                      # every video not yet transcoded (transcodeStatus != 'done')
-//   node local-transcode.mjs --playlist "x" --dry-run           # list targets, encode nothing
-//   node local-transcode.mjs --playlist "x" --no-hevc           # skip the HEVC rendition
-//
-// Safety: mutates PRODUCTION content + R2. Each row is set transcodeStatus='pending' before
-// and 'done'/'error' after, exactly like the pipeline. The original object is NOT deleted
-// (a NEW key is written), so a device mid-download is unaffected and you can roll back by
-// restoring the old objectKey/md5 if needed.
+//   ADMIN_PASSWORD='...' node local-transcode-via-api.mjs <contentId> [...]
+//   ADMIN_PASSWORD='...' node local-transcode-via-api.mjs --all-pending
+//   ADMIN_PASSWORD='...' node local-transcode-via-api.mjs --playlist "name" [--dry-run] [--no-hevc]
 
 import 'dotenv/config';
-import dotenv from 'dotenv';
 import { randomUUID, createHash } from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { writeFile, readFile, unlink } from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaClient } from '@prisma/client';
-
-// Load real creds. .env.production.local wins (Vercel-pulled prod values), then .env.local.
-dotenv.config({ path: '.env.production.local' });
-dotenv.config({ path: '.env.local' });
 
 const run = promisify(execFile);
 const db = new PrismaClient();
+
+const SITE_BASE = (process.env.SITE_BASE || 'https://wearealive.in').replace(/\/+$/, '');
+const PUBLIC_BASE = (
+  process.env.R2_PUBLIC_BASE && process.env.R2_PUBLIC_BASE !== '[SENSITIVE]'
+    ? process.env.R2_PUBLIC_BASE
+    : 'https://media.wearealive.in'
+).replace(/\/+$/, '');
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -56,27 +49,28 @@ const explicitIds = args.filter((a) => !a.startsWith('--') && a !== playlistName
 function die(msg) { console.error('✗ ' + msg); process.exit(1); }
 
 function checkEnv() {
-  const need = ['R2_ENDPOINT', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'R2_PUBLIC_BASE', 'DATABASE_URL'];
-  const missing = need.filter((k) => !process.env[k] || process.env[k] === '[SENSITIVE]');
-  if (missing.length) {
-    die(`These env vars are missing or redacted to [SENSITIVE]: ${missing.join(', ')}\n` +
-        `  Run this in a shell where .env.production.local holds the REAL values (not the Claude sandbox).`);
+  if (!process.env.DATABASE_URL || process.env.DATABASE_URL === '[SENSITIVE]') {
+    die('DATABASE_URL missing/redacted — studio/.env should hold the real value.');
+  }
+  if (!process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD === '[SENSITIVE]') {
+    die("ADMIN_PASSWORD not set. Run as:  ADMIN_PASSWORD='<admin console password>' node local-transcode-via-api.mjs ...");
   }
 }
 
-function r2Client() {
-  return new S3Client({
-    region: 'auto',
-    endpoint: process.env.R2_ENDPOINT,
-    credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY_ID,
-      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-    },
-  });
-}
+function publicUrl(objectKey) { return PUBLIC_BASE + '/' + objectKey.replace(/^\/+/, ''); }
 
-function publicUrl(objectKey) {
-  return process.env.R2_PUBLIC_BASE.replace(/\/+$/, '') + '/' + objectKey.replace(/^\/+/, '');
+// Upload via the prod app: presign, then PUT. The signature covers Content-Type, so the
+// PUT must send exactly the type that was presigned.
+async function uploadViaApi(objectKey, bytes, contentType) {
+  const presign = await fetch(
+    `${SITE_BASE}/api/admin/r2-upload?key=${encodeURIComponent(objectKey)}&type=${encodeURIComponent(contentType)}`,
+    { headers: { 'admin-password': process.env.ADMIN_PASSWORD } },
+  );
+  if (!presign.ok) throw new Error(`presign failed HTTP ${presign.status}: ${(await presign.text()).slice(0, 200)}`);
+  const { uploadUrl } = await presign.json();
+  if (!uploadUrl) throw new Error('presign response missing uploadUrl');
+  const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: bytes });
+  if (!put.ok) throw new Error(`R2 PUT failed HTTP ${put.status}: ${(await put.text()).slice(0, 200)}`);
 }
 
 async function selectTargets() {
@@ -88,7 +82,6 @@ async function selectTargets() {
       where: { playlist: { name: { contains: playlistName, mode: 'insensitive' } }, contentId: { not: null } },
       include: { content: true },
     });
-    // de-dupe by content id; videos only
     const seen = new Map();
     for (const it of items) if (it.content && it.content.type === 'VIDEO') seen.set(it.content.id, it.content);
     return [...seen.values()];
@@ -160,9 +153,7 @@ async function processOne(c) {
     const outBytes = await readFile(tmpOut);
     const md5 = createHash('md5').update(outBytes).digest('hex');
     const objectKey = `content/${c.id}-transcoded-${Date.now()}.mp4`;
-    await r2Client().send(new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET, Key: objectKey, Body: outBytes, ContentType: 'video/mp4',
-    }));
+    await uploadViaApi(objectKey, outBytes, 'video/mp4');
     console.log(`  ✓ H.264 ${width}x${height} ${(outBytes.length / 1e6).toFixed(1)}MB → ${objectKey}`);
 
     // 3. HEVC (best-effort)
@@ -173,9 +164,7 @@ async function processOne(c) {
         await ffmpegHevc(tmpIn, tmpHevc);
         const hb = await readFile(tmpHevc);
         const hevcObjectKey = `content/${c.id}-transcoded-hevc-${Date.now()}.mp4`;
-        await r2Client().send(new PutObjectCommand({
-          Bucket: process.env.R2_BUCKET, Key: hevcObjectKey, Body: hb, ContentType: 'video/mp4',
-        }));
+        await uploadViaApi(hevcObjectKey, hb, 'video/mp4');
         hevc = { hevcObjectKey, hevcMd5: createHash('md5').update(hb).digest('hex'), hevcSizeBytes: BigInt(hb.length) };
         console.log(`  ✓ HEVC ${(hb.length / 1e6).toFixed(1)}MB → ${hevcObjectKey}`);
       } catch (e) {
@@ -211,6 +200,12 @@ async function processOne(c) {
 
 async function main() {
   checkEnv();
+  // Sanity: the public base must serve existing objects, or every download would 404.
+  const probeRow = await db.content.findFirst({ where: { type: 'VIDEO' }, select: { objectKey: true } });
+  if (probeRow) {
+    const head = await fetch(publicUrl(probeRow.objectKey), { method: 'HEAD' });
+    if (!head.ok) die(`public base ${PUBLIC_BASE} does not serve ${probeRow.objectKey} (HTTP ${head.status}). Set SITE_BASE/R2_PUBLIC_BASE and retry.`);
+  }
   const targets = await selectTargets();
   if (!targets.length) die('No matching content found.');
   console.log(`Targets (${targets.length}):`);
@@ -226,4 +221,4 @@ async function main() {
   await db.$disconnect();
 }
 
-main().catch(async (e) => { console.error(e); await db.$disconnect().catch(() => {}); process.exit(1); });
+main().catch((e) => { console.error(e); process.exit(1); });
