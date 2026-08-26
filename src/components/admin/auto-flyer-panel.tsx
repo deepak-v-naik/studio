@@ -211,6 +211,7 @@ export default function AutoFlyerPanel({ adminPassword, onSaved }: { adminPasswo
         method:  'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          storeId:     selectedStore.id,
           storeName:   selectedStore.storeName,
           title,
           description: `Auto-generated from ${selectedOffers.length} active offer${selectedOffers.length === 1 ? '' : 's'}`,
