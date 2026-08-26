@@ -58,6 +58,9 @@ type StoreReg = {
   // GPS-verified onboarding photos
   shopPhotoUrl?: string | null; shopPhotoLat?: number | null; shopPhotoLng?: number | null; shopPhotoSource?: string | null; shopPhotoAt?: string | null;
   installPhotoUrl?: string | null; installPhotoLat?: number | null; installPhotoLng?: number | null; installPhotoSource?: string | null; installPhotoAt?: string | null;
+  // Installation & hardware (ops-recorded at the site visit)
+  tvBrand?: string | null; tvSizeInches?: number | null; tvTag?: string | null; tvInstalledAt?: string | null;
+  espSwitchName?: string | null; wifiSsid?: string | null; wifiPassword?: string | null; installNotes?: string | null;
 };
 type Campaign = {
   id: string; brandId: string | null; brandName: string; contactName: string; email: string;
@@ -493,6 +496,24 @@ function AdminPhotoCard({ label, url, lat, lng, source, at, storeLat, storeLng }
   );
 }
 
+/** Compact labelled field for the store card's hardware grid. */
+function LabelledInput({ label, value, onChange, placeholder, type = 'text' }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+      <input
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+      />
+    </label>
+  );
+}
+
 function StoresPanel() {
   const [stores,   setStores]   = useState<StoreReg[]>([]);
   const [loading,  setLoading]  = useState(true);
@@ -543,6 +564,16 @@ function StoresPanel() {
           onboardingStage: store.onboardingStage,
           payoutStatus: store.payoutStatus,
           payoutNotes: store.payoutNotes || null,
+          // Installation & hardware — sent as-is; the route normalises blanks to
+          // NULL and validates the size/date, so clearing a field really clears it.
+          tvBrand:       store.tvBrand ?? null,
+          tvSizeInches:  store.tvSizeInches ?? null,
+          tvTag:         store.tvTag ?? null,
+          tvInstalledAt: store.tvInstalledAt ?? null,
+          espSwitchName: store.espSwitchName ?? null,
+          wifiSsid:      store.wifiSsid ?? null,
+          wifiPassword:  store.wifiPassword ?? null,
+          installNotes:  store.installNotes ?? null,
         }),
       });
       if (!res.ok) {
@@ -751,6 +782,36 @@ function StoresPanel() {
                       <AdminPhotoCard label="Installed TV" url={s.installPhotoUrl} lat={s.installPhotoLat} lng={s.installPhotoLng}
                         source={s.installPhotoSource} at={s.installPhotoAt}
                         storeLat={s.lat != null ? Number(s.lat) : null} storeLng={s.lng != null ? Number(s.lng) : null} />
+                    </div>
+
+                    {/* Installation & hardware — what ops records at the site visit.
+                        Saved by the same Save button as the dropdowns below. */}
+                    <div className="rounded-xl border border-border bg-muted/20 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Installation &amp; hardware</p>
+                        {s.tvTag && <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">TV #{s.tvTag}</span>}
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        <LabelledInput label="TV number / tag" value={s.tvTag ?? ''} placeholder="e.g. 27"
+                          onChange={(v) => patchLocal(s.id, { tvTag: v })} />
+                        <LabelledInput label="TV company" value={s.tvBrand ?? ''} placeholder="e.g. Foxsky"
+                          onChange={(v) => patchLocal(s.id, { tvBrand: v })} />
+                        <LabelledInput label="TV size (in)" value={s.tvSizeInches != null ? String(s.tvSizeInches) : ''} placeholder="43" type="number"
+                          onChange={(v) => patchLocal(s.id, { tvSizeInches: v === '' ? null : Number(v) })} />
+                        <LabelledInput label="Installed on" value={s.tvInstalledAt ? s.tvInstalledAt.slice(0, 10) : ''} type="date"
+                          onChange={(v) => patchLocal(s.id, { tvInstalledAt: v || null })} />
+                        <LabelledInput label="ESP switch name" value={s.espSwitchName ?? ''} placeholder="Sonoff label"
+                          onChange={(v) => patchLocal(s.id, { espSwitchName: v })} />
+                        <LabelledInput label="WiFi SSID" value={s.wifiSsid ?? ''} placeholder="Shop WiFi"
+                          onChange={(v) => patchLocal(s.id, { wifiSsid: v })} />
+                        <LabelledInput label="WiFi password" value={s.wifiPassword ?? ''} placeholder="••••••"
+                          onChange={(v) => patchLocal(s.id, { wifiPassword: v })} />
+                        <LabelledInput label="Install notes" value={s.installNotes ?? ''} placeholder="Mount, socket…"
+                          onChange={(v) => patchLocal(s.id, { installNotes: v })} />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground/70">
+                        Partners can also record the TV number with the installed-TV photo from the app. WiFi password is visible to admins only.
+                      </p>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">

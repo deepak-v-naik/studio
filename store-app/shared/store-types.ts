@@ -34,6 +34,7 @@ export type StoreSession = {
   installPhotoLat?:  number | null;
   installPhotoLng?:  number | null;
   installPhotoAt?:   string | null;
+  tvTag?:            string | null; // TV number / ID pin, recorded with the installed-TV photo
   payoutMethod?:    string;
   upiId?:           string;
   bankAccountName?: string;

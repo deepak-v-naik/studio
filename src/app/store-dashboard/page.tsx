@@ -59,6 +59,7 @@ type StoreInfo = {
   // GPS-verified onboarding photos (see GpsPhotoUpload)
   shopPhotoUrl?:    string | null; shopPhotoLat?:    number | null; shopPhotoLng?:    number | null; shopPhotoAt?:    string | null;
   installPhotoUrl?: string | null; installPhotoLat?: number | null; installPhotoLng?: number | null; installPhotoAt?: string | null;
+  tvTag?: string | null; // TV number / ID pin, recorded with the installed-TV photo
 };
 
 type Flyer = {
@@ -419,6 +420,9 @@ function GpsPhotoUpload({ kind, store, onUploaded }: {
 }) {
   const [busy,  setBusy]  = useState<null | 'reading' | 'locating' | 'uploading'>(null);
   const [error, setError] = useState<string | null>(null);
+  // Install photo only: the number/ID pin marked on the TV, recorded at the
+  // moment the installed screen is photographed.
+  const [tvTag, setTvTag] = useState('');
 
   const handleFile = async (file: File) => {
     setError(null);
@@ -468,6 +472,7 @@ function GpsPhotoUpload({ kind, store, onUploaded }: {
       fd.append('lng', String(coords.lng));
       fd.append('source', source);
       fd.append('storeId', store.id ?? '');
+      if (kind === 'install' && tvTag.trim()) fd.append('tvTag', tvTag.trim());
       const res  = await fetch('/api/stores/verification-photo', {
         method: 'POST', body: fd,
         headers: store.token ? { 'x-store-token': store.token } : undefined,
@@ -476,7 +481,7 @@ function GpsPhotoUpload({ kind, store, onUploaded }: {
       if (!res.ok || !body?.url) { setError(body?.error ?? 'Upload failed. Please try again.'); return; }
       onUploaded(kind === 'shop'
         ? { shopPhotoUrl: body.url, shopPhotoLat: coords.lat, shopPhotoLng: coords.lng, shopPhotoAt: new Date().toISOString() }
-        : { installPhotoUrl: body.url, installPhotoLat: coords.lat, installPhotoLng: coords.lng, installPhotoAt: new Date().toISOString() });
+        : { installPhotoUrl: body.url, installPhotoLat: coords.lat, installPhotoLng: coords.lng, installPhotoAt: new Date().toISOString(), tvTag: tvTag.trim() || undefined });
     } catch {
       setError('Could not reach the server. Check your connection and try again.');
     } finally {
@@ -491,6 +496,19 @@ function GpsPhotoUpload({ kind, store, onUploaded }: {
         <Camera className="h-3.5 w-3.5 text-primary shrink-0" /> {copy.title}
       </p>
       <p className="text-[11px] text-muted-foreground leading-relaxed">{copy.hint}</p>
+      {kind === 'install' && !busy && (
+        <label className="block">
+          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            TV number / ID pin <span className="font-normal normal-case tracking-normal">(optional)</span>
+          </span>
+          <input
+            value={tvTag}
+            onChange={(e) => setTvTag(e.target.value)}
+            placeholder="Number marked on the TV, e.g. 27"
+            className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+          />
+        </label>
+      )}
       {busy ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-1.5">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />

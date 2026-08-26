@@ -122,6 +122,8 @@ export async function uploadVerificationPhoto(opts: {
   lat: number;
   lng: number;
   source: 'exif' | 'device';
+  /** Install photo only: TV number / ID pin marked on the unit. */
+  tvTag?: string;
 }): Promise<{ ok: boolean; url: string }> {
   const form = new FormData();
   form.append('storeId', opts.storeId);
@@ -129,6 +131,7 @@ export async function uploadVerificationPhoto(opts: {
   form.append('lat', String(opts.lat));
   form.append('lng', String(opts.lng));
   form.append('source', opts.source);
+  if (opts.kind === 'install' && opts.tvTag?.trim()) form.append('tvTag', opts.tvTag.trim());
   // React Native FormData file part: { uri, name, type }
   form.append('file', { uri: opts.fileUri, name: `${opts.kind}.jpg`, type: opts.mimeType } as unknown as Blob);
 

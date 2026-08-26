@@ -39,6 +39,11 @@ export async function POST(req: NextRequest) {
     const lat  = Number(form.get('lat'));
     const lng  = Number(form.get('lng'));
     const source = (form.get('source') as string | null) ?? 'device';
+    // Optional, install photo only: the TV number / ID pin marked on the unit,
+    // captured at the moment the installed screen is photographed. Ops can
+    // correct it later from the admin panel.
+    const tvTagRaw = (form.get('tvTag') as string | null) ?? '';
+    const tvTag = tvTagRaw.trim().slice(0, 40) || null;
 
     if (!file) return NextResponse.json({ error: 'file required' }, { status: 400 });
     if (kind !== 'shop' && kind !== 'install') {
@@ -101,6 +106,18 @@ export async function POST(req: NextRequest) {
             "installPhotoSource" = ${source}, "installPhotoAt" = ${now}, "updatedAt" = ${now}
           WHERE "id" = ${storeId}
         `;
+        // TV number is written separately and only when supplied, so an app that
+        // doesn't send it can never blank a tag ops already recorded. Tolerated
+        // if the hardware columns aren't migrated yet — the photo still counts.
+        if (tvTag) {
+          try {
+            await db.$executeRaw`
+              UPDATE "Store" SET "tvTag" = ${tvTag}, "updatedAt" = ${now} WHERE "id" = ${storeId}
+            `;
+          } catch (e) {
+            console.error('verification-photo: tvTag not stored:', (e as Error).message.slice(0, 120));
+          }
+        }
       }
     } catch (e) {
       // DB write failed — don't leave the fresh object orphaned in R2.

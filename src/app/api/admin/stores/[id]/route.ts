@@ -33,6 +33,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       onboardingStage?: string;
       payoutStatus?: string;
       payoutNotes?: string;
+      // Installation & hardware (see the Store model) — ops fills these at the site visit.
+      tvBrand?: string | null;
+      tvSizeInches?: number | string | null;
+      tvTag?: string | null;
+      tvInstalledAt?: string | null;
+      espSwitchName?: string | null;
+      wifiSsid?: string | null;
+      wifiPassword?: string | null;
+      installNotes?: string | null;
     };
 
     // ── GPS-photo gates on stage advancement ─────────────────────────────────
@@ -95,6 +104,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ('payoutNotes' in body) {
       setClauses.push(`"payoutNotes" = $${values.length + 1}`);
       values.push(body.payoutNotes ?? null);
+    }
+
+    // ── Installation & hardware ──────────────────────────────────────────────
+    // Column names come from this fixed map, never from the request, so the raw
+    // UPDATE stays injection-safe. Blank strings are stored as NULL so clearing
+    // a field in the panel actually clears it.
+    const TEXT_COLS = ['tvBrand', 'tvTag', 'espSwitchName', 'wifiSsid', 'wifiPassword', 'installNotes'] as const;
+    for (const col of TEXT_COLS) {
+      if (col in body) {
+        const raw = body[col];
+        setClauses.push(`"${col}" = $${values.length + 1}`);
+        values.push(typeof raw === 'string' && raw.trim() ? raw.trim() : null);
+      }
+    }
+    if ('tvSizeInches' in body) {
+      const n = Number(body.tvSizeInches);
+      // Reject nonsense sizes rather than storing them; blank clears the field.
+      const size = Number.isFinite(n) && n > 0 && n <= 200 ? Math.round(n) : null;
+      setClauses.push(`"tvSizeInches" = $${values.length + 1}`);
+      values.push(size);
+    }
+    if ('tvInstalledAt' in body) {
+      const d = body.tvInstalledAt ? new Date(body.tvInstalledAt) : null;
+      setClauses.push(`"tvInstalledAt" = $${values.length + 1}`);
+      values.push(d && !isNaN(d.getTime()) ? d : null);
     }
 
     if (setClauses.length === 0) return NextResponse.json({ ok: true });

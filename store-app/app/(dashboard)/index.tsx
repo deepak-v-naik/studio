@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Linking,
-  StyleSheet, ActivityIndicator, Share, Image, Alert,
+  StyleSheet, ActivityIndicator, Share, Image, Alert, TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -56,6 +56,9 @@ function GpsPhotoRow({ kind, store, onUploaded }: {
   onUploaded: (patch: Partial<StoreSession>) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  // Install photo only: the number/ID pin marked on the TV, captured at the
+  // moment the installed screen is photographed.
+  const [tvTag, setTvTag] = useState('');
 
   const url = kind === 'shop' ? store.shopPhotoUrl : store.installPhotoUrl;
   const lat = kind === 'shop' ? store.shopPhotoLat : store.installPhotoLat;
@@ -113,11 +116,12 @@ function GpsPhotoRow({ kind, store, onUploaded }: {
       const out = await uploadVerificationPhoto({
         storeId: store.id ?? '', token: store.token, kind, fileUri: asset.uri,
         mimeType: asset.mimeType ?? 'image/jpeg', lat: coords.lat, lng: coords.lng, source,
+        tvTag,
       });
       const now = new Date().toISOString();
       onUploaded(kind === 'shop'
         ? { shopPhotoUrl: out.url, shopPhotoLat: coords.lat, shopPhotoLng: coords.lng, shopPhotoAt: now }
-        : { installPhotoUrl: out.url, installPhotoLat: coords.lat, installPhotoLng: coords.lng, installPhotoAt: now });
+        : { installPhotoUrl: out.url, installPhotoLat: coords.lat, installPhotoLng: coords.lng, installPhotoAt: now, tvTag: tvTag.trim() || null });
     } catch (e) {
       Alert.alert('Upload failed', (e as Error).message ?? 'Please try again.');
     } finally {
@@ -135,6 +139,20 @@ function GpsPhotoRow({ kind, store, onUploaded }: {
           ? 'Take it with a GPS map camera app, standing in front of the store. Our team verifies the location before your verification call.'
           : 'A GPS-tagged photo showing the TV running in your store.'}
       </Text>
+      {kind === 'install' && !busy && (
+        <View>
+          <Text style={s.photoFieldLabel}>TV number / ID pin (optional)</Text>
+          <TextInput
+            value={tvTag}
+            onChangeText={setTvTag}
+            placeholder="Number marked on the TV, e.g. 27"
+            placeholderTextColor={C.textMuted}
+            style={s.photoInput}
+            maxLength={40}
+            returnKeyType="done"
+          />
+        </View>
+      )}
       {busy ? (
         <View style={s.photoBusy}>
           <ActivityIndicator size="small" color={C.primary} />
@@ -423,6 +441,11 @@ const s = StyleSheet.create({
     borderColor: C.primaryBorder, backgroundColor: C.primaryLight, padding: 10, gap: 4,
   },
   photoBoxTitle: { fontSize: 12, fontWeight: '700', color: C.text },
+  photoFieldLabel: { fontSize: 10, fontWeight: '700', color: C.textSub, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4, marginBottom: 3 },
+  photoInput: {
+    borderWidth: 1, borderColor: C.border, backgroundColor: C.card, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, color: C.text,
+  },
   photoBoxHint: { fontSize: 10.5, color: C.textSub, lineHeight: 15 },
   photoBtn: {
     marginTop: 4, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

@@ -85,11 +85,40 @@ export async function GET(req: NextRequest) {
       photoMap = new Map(photoRows.map((r) => [r.id, r]));
     } catch { /* columns not yet migrated — omit gracefully */ }
 
+    // Installation & hardware — again a separate tolerant query, so a missing
+    // migration degrades to "no hardware recorded" instead of blanking the
+    // stage/payout/photo columns above. Admin-gated route, so wifiPassword is
+    // safe to include here (partner routes never return it).
+    type InstallRow = {
+      id: string;
+      tvBrand: string | null; tvSizeInches: number | null; tvTag: string | null;
+      tvInstalledAt: Date | null; espSwitchName: string | null;
+      wifiSsid: string | null; wifiPassword: string | null; installNotes: string | null;
+    };
+    let installMap = new Map<string, InstallRow>();
+    try {
+      const installRows = await db.$queryRaw<InstallRow[]>`
+        SELECT "id", "tvBrand", "tvSizeInches", "tvTag", "tvInstalledAt",
+               "espSwitchName", "wifiSsid", "wifiPassword", "installNotes"
+        FROM "Store"
+      `;
+      installMap = new Map(installRows.map((r) => [r.id, r]));
+    } catch { /* columns not yet migrated — omit gracefully */ }
+
     const result = stores.map((s) => {
       const ex = extraMap.get(s.id);
       const ph = photoMap.get(s.id);
+      const hw = installMap.get(s.id);
       return {
         ...s,
+        tvBrand:       hw?.tvBrand       ?? null,
+        tvSizeInches:  hw?.tvSizeInches  ?? null,
+        tvTag:         hw?.tvTag         ?? null,
+        tvInstalledAt: hw?.tvInstalledAt instanceof Date ? hw.tvInstalledAt.toISOString() : (hw?.tvInstalledAt ?? null),
+        espSwitchName: hw?.espSwitchName ?? null,
+        wifiSsid:      hw?.wifiSsid      ?? null,
+        wifiPassword:  hw?.wifiPassword  ?? null,
+        installNotes:  hw?.installNotes  ?? null,
         shopPhotoUrl:       ph?.shopPhotoUrl       ?? null,
         shopPhotoLat:       ph?.shopPhotoLat       ?? null,
         shopPhotoLng:       ph?.shopPhotoLng       ?? null,

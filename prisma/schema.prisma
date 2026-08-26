@@ -141,6 +141,25 @@ model Store {
   installPhotoSource String?
   installPhotoAt     DateTime?
 
+  // ── Installation & hardware (ops-recorded at the site visit) ────────────────
+  // Deliberately on Store, not Device: the decommission flow DELETES the Device
+  // row when a screen is removed in admin, and a re-paired screen claims a fresh
+  // row — so anything held there is lost on every re-pair. The physical TV asset
+  // and the site's wiring/network outlive that, and "1 screen per store" (see
+  // CLAUDE.md business rules) makes the store the unambiguous owner.
+  //
+  // wifiPassword is ADMIN-ONLY: it is returned by the admin-password-gated store
+  // list and never by the partner-facing routes (/api/stores/me), because a
+  // storeId alone is enough to read those.
+  tvBrand       String? // manufacturer / company, e.g. "Foxsky", "Kodak"
+  tvSizeInches  Int? // panel size in inches, e.g. 43
+  tvTag         String? // ALIVE asset tag / TV number physically marked on the unit
+  tvInstalledAt DateTime? // when the screen was physically installed
+  espSwitchName String? // label on the ESP/Sonoff smart switch at the site (see SmartPlug for the live eWeLink name)
+  wifiSsid      String?
+  wifiPassword  String?
+  installNotes  String? // free-text: mount position, socket, anything the next technician needs
+
   // ── Slot loop (fixed-loop ad inventory) ─────────────────────────────────────
   // Inventory is sold by loop position + date, never clock time. loopSlotCount is
   // ALSO the slot-mode switch: null = store plays its normal schedules/playlists;
