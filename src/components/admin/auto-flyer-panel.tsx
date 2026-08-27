@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Wand2, Loader2, CheckSquare, Square, Save, RefreshCw, Search } from 'lucide-react';
 import { CATEGORY_OPTIONS } from '@/lib/product-id';
+import { adminGetArray } from '@/lib/admin-fetch';
 
 type StoreRow = { id: string; storeName: string };
 type Offer = {
@@ -71,8 +72,9 @@ export default function AutoFlyerPanel({ adminPassword, onSaved }: { adminPasswo
     setOffers([]); setSelected(new Set()); setPreviewUrl(null); setPreviewBlob(null);
     if (!storeId) return;
     setLoadingOffers(true);
-    fetch(`/api/admin/store-offers?storeId=${storeId}`, { headers })
-      .then(r => r.json() as Promise<Offer[]>)
+    // Must stay array-typed: selectedOffers' useMemo calls offers.filter during
+    // the render phase, so a 401 body landing in state crashes the whole admin.
+    adminGetArray<Offer>(`/api/admin/store-offers?storeId=${storeId}`, adminPassword)
       .then(setOffers)
       .catch(() => setOffers([]))
       .finally(() => setLoadingOffers(false));

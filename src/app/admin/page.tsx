@@ -37,6 +37,7 @@ const AppPreviewCard   = dynamic(() => import('@/components/admin/app-preview-ca
 const CouponsTab       = dynamic(() => import('@/components/admin/coupons-tab'),         { ssr: false });
 import { Logo } from '@/components/icons/logo';
 import OfflineAlertWatcher from '@/components/admin/offline-alert-watcher';
+import { adminGetArray, adminGetObject } from '@/lib/admin-fetch';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -398,11 +399,12 @@ function PremiumLinkCard() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    const pw = sessionStorage.getItem(SS_PW) ?? '';
-    fetch('/api/admin/premium-link', { headers: { 'admin-password': pw } })
-      .then((r) => r.json())
+    // On failure render nothing rather than the "Not configured — set
+    // PREMIUM_SIGNUP_KEY" banner: a 401/5xx used to land here and send the admin
+    // off to fix an env var that was already correct.
+    adminGetObject<{ configured: boolean; link: string | null; monthlyRupees: number }>('/api/admin/premium-link')
       .then(setData)
-      .catch(() => setData({ configured: false, link: null, monthlyRupees: 1000 }));
+      .catch(() => setData(null));
   }, []);
 
   if (!data) return null;
@@ -793,10 +795,12 @@ function CampaignsPanel() {
   const [offeringTrial, setOfferingTrial] = useState<string | null>(null);
 
   useEffect(() => {
-    const pw = sessionStorage.getItem(SS_PW) ?? '';
-    fetch('/api/campaigns/admin', { headers: { 'admin-password': pw } })
-      .then((r) => r.json() as Promise<Campaign[]>)
-      .then(setCampaigns).catch(() => setCampaigns([]))
+    // adminGetArray, not a bare r.json(): a 401 body parses fine, and letting it
+    // reach setCampaigns made the reduce/filter below throw and take the whole
+    // dashboard down with "Something went wrong".
+    adminGetArray<Campaign>('/api/campaigns/admin')
+      .then(setCampaigns)
+      .catch(() => setCampaigns([]))
       .finally(() => setLoading(false));
   }, []);
 

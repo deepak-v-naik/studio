@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { Upload, RotateCcw, Link, Eye } from 'lucide-react';
+import { adminGetObject } from '@/lib/admin-fetch';
 
 const MEDIA_SLOTS = [
   // Hero carousel (3 rotating panels)
@@ -35,7 +36,9 @@ export default function SiteMediaTab({ adminPassword }: { adminPassword: string 
   const activeSlotRef = useRef<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/admin/site-media', { headers }).then(r => r.json()).then(setMedia).catch(() => {});
+    adminGetObject<Record<string, string>>('/api/admin/site-media', adminPassword)
+      .then(setMedia)
+      .catch(() => setMedia({}));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminPassword]);
 
