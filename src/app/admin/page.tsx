@@ -351,11 +351,15 @@ const STAGE_LABELS: Record<string, string> = {
   new: 'New', contacted: 'Contacted', physically_onboarded: 'Physically onboarded',
   digitally_onboarded: 'Digitally onboarded', live: 'Live', rejected: 'Rejected',
 };
+// Pastel-on-white in light mode; translucent tint on dark so the chips sit in
+// the card instead of glowing on top of it.
 const STAGE_COLORS: Record<string, string> = {
-  new: 'bg-gray-100 text-gray-600', contacted: 'bg-amber-50 text-amber-600',
-  physically_onboarded: 'bg-blue-50 text-blue-600',
-  digitally_onboarded: 'bg-indigo-50 text-indigo-600', live: 'bg-green-50 text-green-700',
-  rejected: 'bg-red-50 text-red-500',
+  new: 'bg-gray-100 text-gray-600 dark:bg-neutral-700/50 dark:text-neutral-300',
+  contacted: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
+  physically_onboarded: 'bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300',
+  digitally_onboarded: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300',
+  live: 'bg-green-50 text-green-700 dark:bg-green-500/15 dark:text-green-300',
+  rejected: 'bg-red-50 text-red-500 dark:bg-red-500/15 dark:text-red-300',
 };
 const PAYOUT_LABELS: Record<string, string> = {
   pending_setup: 'Setup pending', ready: 'Ready', paid: 'Paid', on_hold: 'On hold',
@@ -676,7 +680,7 @@ function StoresPanel() {
                     </a>
                   ) : (
                     <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-primary/10 via-muted/60 to-muted">
-                      <span className={`flex h-14 w-14 items-center justify-center rounded-2xl text-2xl font-black ${isRejected ? 'bg-red-50 text-red-400' : 'bg-primary/10 text-primary'}`}>
+                      <span className={`flex h-14 w-14 items-center justify-center rounded-2xl text-2xl font-black ${isRejected ? 'bg-red-50 text-red-400 dark:bg-red-500/15 dark:text-red-300' : 'bg-primary/10 text-primary'}`}>
                         {s.storeName[0]?.toUpperCase()}
                       </span>
                       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">No shop photo yet</span>
@@ -688,11 +692,11 @@ function StoresPanel() {
                   </span>
                   <div className="absolute right-3 top-3 flex items-center gap-1.5">
                     {s.tier === 'premium' && (
-                      <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 shadow-sm">
+                      <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-300">
                         <Star className="h-2.5 w-2.5" /> Premium
                       </span>
                     )}
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-sm ${(s.deviceCount ?? 0) > 0 ? 'bg-green-50 text-green-700' : 'bg-white/90 text-gray-500'}`}>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-sm ${(s.deviceCount ?? 0) > 0 ? 'bg-green-50 text-green-700 dark:bg-green-500/15 dark:text-green-300' : 'bg-white/90 text-gray-500 dark:bg-neutral-800/90 dark:text-neutral-300'}`}>
                       <Tv2 className="h-2.5 w-2.5" /> {s.deviceCount ?? 0} screen{(s.deviceCount ?? 0) !== 1 ? 's' : ''}
                     </span>
                   </div>
@@ -755,7 +759,7 @@ function StoresPanel() {
                         type="button"
                         onClick={() => void deleteStore(s.id, s.storeName)}
                         disabled={deleting === s.id}
-                        className="ml-auto flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1.5 text-[11px] font-medium text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+                        className="ml-auto flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1.5 text-[11px] font-medium text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/15"
                       >
                         {deleting === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
                       </button>
@@ -1685,7 +1689,11 @@ function Dashboard() {
   };
 
   return (
-    <div className="adm app" ref={containerRef} data-theme={theme}>
+    // `dark` alongside data-theme: tailwind.config uses darkMode:['class'], so
+    // this is what makes `dark:` utilities work for the panels inside. The
+    // surface tokens themselves are re-pointed in admin.css, which outranks
+    // globals' .dark values and keeps cards aligned to the shell's palette.
+    <div className={`adm app${theme === 'dark' ? ' dark' : ''}`} ref={containerRef} data-theme={theme}>
       {/* Pops a toast the moment a screen drops, and keeps the bell count live */}
       <OfflineAlertWatcher
         onUnreadChange={setOfflineAlertCount}
