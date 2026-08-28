@@ -604,6 +604,22 @@ function StoresPanel() {
   const patchLocal = (id: string, patch: Partial<StoreReg>) =>
     setStores((all) => all.map((x) => x.id === id ? { ...x, ...patch } : x));
 
+  // Expanding a card gives it `sm:col-span-2`, and CSS grid cannot keep a
+  // two-column item in a row where only one column is free — so a card in the
+  // right-hand column is re-placed onto the next row the moment you hit Edit.
+  // In a long list that lands it below the fold and it reads as "the card
+  // vanished". Follow it with the viewport once the new layout is committed.
+  // Two frames: the first lands after React's commit, the second after the
+  // browser has re-run grid layout, so we scroll to the card's final position.
+  const expandStore = (id: string | null) => {
+    setExpanded(id);
+    if (!id) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.getElementById(`store-card-${id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }));
+  };
+
   const filtered = stores.filter((s) =>
     !search ||
     s.storeName.toLowerCase().includes(search.toLowerCase()) ||
@@ -667,8 +683,9 @@ function StoresPanel() {
             return (
               <motion.div
                 key={s.id}
+                id={`store-card-${s.id}`}
                 variants={fadeIn}
-                className={`group overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-lg ${isRejected ? 'border-red-200 opacity-70' : 'border-border'} ${isExpanded ? 'sm:col-span-2' : ''}`}
+                className={`group overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-lg ${isRejected ? 'border-red-200 opacity-70' : 'border-border'} ${isExpanded ? 'sm:col-span-2 scroll-mt-24' : ''}`}
               >
                 {/* Photo banner */}
                 <div className="relative h-44 w-full overflow-hidden bg-muted">
@@ -750,8 +767,8 @@ function StoresPanel() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setExpanded(isExpanded ? null : s.id)}
-                        className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={() => expandStore(isExpanded ? null : s.id)}
+                        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${isExpanded ? 'border-primary/40 bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}
                       >
                         {isExpanded ? 'Less' : 'Edit'}
                       </button>
