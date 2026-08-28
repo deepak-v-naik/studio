@@ -10,7 +10,7 @@ import {
   ChevronRight, LogOut, LayoutDashboard, LayoutGrid, Images, Map, Layers,
   // New icons for the redesign
   MonitorPlay,
-  Search, Bell, Moon, Sun, LifeBuoy, Download, Plus,
+  Search, Bell, LifeBuoy, Download, Plus,
   Megaphone, Image, Radar, Grid3x3, ImagePlus,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
@@ -1404,11 +1404,10 @@ function SidebarNav({ tab, onTab, onSignOut, liveCount }: {
 
 // ─── New Topbar ───────────────────────────────────────────────────────────────
 
-function Topbar({ section, liveCount, onOpenCmd, onOpenNotif, theme, setTheme, unread }: {
+function Topbar({ section, liveCount, onOpenCmd, onOpenNotif, unread }: {
   section: string; liveCount: number; onOpenCmd: () => void; onOpenNotif: () => void;
-  theme: 'light' | 'dark'; setTheme: (t: 'light' | 'dark') => void; unread: number;
+  unread: number;
 }) {
-  const isDark = theme === 'dark';
   return (
     <header className="tb">
       <div className="tb__crumbs">
@@ -1433,13 +1432,6 @@ function Topbar({ section, liveCount, onOpenCmd, onOpenNotif, theme, setTheme, u
         onClick={onOpenNotif}
       >
         <Bell className="h-4 w-4" />
-      </button>
-      <button
-        className="tb__icon-btn"
-        title={isDark ? 'Light mode' : 'Dark mode'}
-        onClick={() => setTheme(isDark ? 'light' : 'dark')}
-      >
-        {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
       <button className="tb__icon-btn" title="Help"><LifeBuoy className="h-4 w-4" /></button>
       <div className="tb__divider"></div>
@@ -1568,7 +1560,6 @@ function Dashboard() {
   const [refreshKey,  setRefreshKey]  = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [cmdOpen,     setCmdOpen]     = useState(false);
-  const [theme,       setTheme]       = useState<'light' | 'dark'>('light');
   const [adminPw,     setAdminPw]     = useState('');
   const [liveCount,   setLiveCount]   = useState(0);
   const [alertCount,  setAlertCount]  = useState(0);
@@ -1579,12 +1570,8 @@ function Dashboard() {
   const [tickerStats, setTickerStats] = useState<OpsStats | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Load theme from localStorage + prefetch alert count + live network stats for the ticker
+  // Prefetch alert count + live network stats for the ticker
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('alive-theme') as 'light' | 'dark' | null;
-      if (saved) setTheme(saved);
-    } catch {}
     const pw = sessionStorage.getItem(SS_PW) ?? '';
     setAdminPw(pw);
     // Quick count of unread alerts (offline devices + pending campaigns/stores)
@@ -1638,11 +1625,6 @@ function Dashboard() {
     }).catch(() => {});
   }, []);
 
-  // Apply theme to container
-  useEffect(() => {
-    try { localStorage.setItem('alive-theme', theme); } catch {}
-  }, [theme]);
-
   // ⌘K keyboard shortcut
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1689,11 +1671,10 @@ function Dashboard() {
   };
 
   return (
-    // `dark` alongside data-theme: tailwind.config uses darkMode:['class'], so
-    // this is what makes `dark:` utilities work for the panels inside. The
-    // surface tokens themselves are re-pointed in admin.css, which outranks
-    // globals' .dark values and keeps cards aligned to the shell's palette.
-    <div className={`adm app${theme === 'dark' ? ' dark' : ''}`} ref={containerRef} data-theme={theme}>
+    // Light-only: the theme toggle was removed, so this is fixed rather than
+    // stateful. The dark rules in admin.css stay keyed on data-theme="dark" and
+    // are simply unreachable — set this back to a theme state to re-enable.
+    <div className="adm app" ref={containerRef} data-theme="light">
       {/* Pops a toast the moment a screen drops, and keeps the bell count live */}
       <OfflineAlertWatcher
         onUnreadChange={setOfflineAlertCount}
@@ -1707,8 +1688,6 @@ function Dashboard() {
           liveCount={liveCount}
           onOpenCmd={() => setCmdOpen(true)}
           onOpenNotif={() => handleNav('alerts')}
-          theme={theme}
-          setTheme={setTheme}
           unread={alertCount + offlineAlertCount}
         />
         <Ticker stats={tickerStats} />
