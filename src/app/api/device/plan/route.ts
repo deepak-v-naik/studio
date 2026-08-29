@@ -17,7 +17,7 @@ import { resolvePlaylistTree, pickRendition, type PlanMediaItem, type PlanNested
 import { istToday, isOpenOn, buildSlotLoop, SLOT_DURATION_MS } from '@/lib/slots';
 import { resolveFillerCampaign } from '@/lib/slots-db';
 import { isDevicePaired } from '@/lib/device-auth';
-import { resolveOfflineAlerts } from '@/lib/device-alerts';
+import { resolveOfflineAlerts, backfillMissedOutage } from '@/lib/device-alerts';
 
 async function authenticate(req: NextRequest) {
   const auth  = req.headers.get('authorization') ?? '';
@@ -468,7 +468,17 @@ export async function GET(req: NextRequest) {
     // both leaves a false "screen has stopped" banner on the partner's dashboard
     // and permanently silences that device (openOfflineAlerts skips devices with
     // an OPEN alert). after() keeps the work alive past the response.
-    if (device.status === 'OFFLINE') after(() => resolveOfflineAlerts(device.id, now));
+    //
+    // Then reconstruct any outage the sweep never recorded. Its schedule drifts by
+    // hours, so an outage that began and ended between two runs never flipped the
+    // status and would otherwise vanish; the same is true when the sweep flipped
+    // the status but failed to open a row, which is why this runs even after a
+    // resolve rather than as its else-branch. `device` predates the write above,
+    // so device.lastSeen is still the pre-heartbeat value — the far edge of the gap.
+    after(async () => {
+      if (device.status === 'OFFLINE') await resolveOfflineAlerts(device.id, now);
+      await backfillMissedOutage(device, device.lastSeen, now);
+    });
 
     return NextResponse.json({
       planHash,

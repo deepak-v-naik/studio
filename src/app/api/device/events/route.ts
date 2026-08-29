@@ -13,7 +13,7 @@ import { verifyDeviceToken, isDevicePaired } from '@/lib/device-auth';
 import crypto from 'crypto';
 import { getOrCreateCorrelationId, hashStack, recordError } from '@/lib/telemetry';
 import { respond } from '@/lib/api-envelope';
-import { resolveOfflineAlerts } from '@/lib/device-alerts';
+import { resolveOfflineAlerts, backfillMissedOutage } from '@/lib/device-alerts';
 
 type PlayEventInput = {
   id:          string;   // client-generated UUID for dedup
@@ -177,6 +177,9 @@ export async function POST(req: NextRequest) {
     // status ONLINE — resolving without the flip would leave the alert closed
     // while the device still reads OFFLINE, and the next sweep would re-open it.
     const wasOffline = device.status === 'OFFLINE';
+    // Same pre-write row, so this is the last heartbeat before the update below —
+    // the far edge of any gap the health sweep slept through (backfillMissedOutage).
+    const previousLastSeen = device.lastSeen;
     if (!Array.isArray(events) || events.length === 0) {
       // Allow empty event batches if telemetry-only heartbeat
       if (telemetry) {
@@ -188,9 +191,15 @@ export async function POST(req: NextRequest) {
           },
         }).catch(() => { /* telemetry columns may not exist yet */ });
         // after(), not a bare void — see the note in /api/device/plan: this is the
-    // only writer of RESOLVED, and a promise dropped at response-flush would
-    // strand the alert OPEN and silence the device for good.
-    if (wasOffline) after(() => resolveOfflineAlerts(device.id));
+        // only writer of RESOLVED, and a promise dropped at response-flush would
+        // strand the alert OPEN and silence the device for good.
+        // Backfill runs even after a resolve, not as its else-branch — see the note
+        // on backfillMissedOutage: it also covers a sweep that flipped the status
+        // but never wrote a row, and it no-ops when the gap is already recorded.
+        after(async () => {
+          if (wasOffline) await resolveOfflineAlerts(device.id);
+          await backfillMissedOutage(device, previousLastSeen);
+        });
         const envelope = await respond({ accepted: 0, telemetry: true }, { route, request: { correlationId, eventsCount: 0 }, outcome: 'success', policyFlags: ['telemetry_only'], startedAtMs });
         return NextResponse.json(envelope);
       }
@@ -366,7 +375,13 @@ export async function POST(req: NextRequest) {
     // after(), not a bare void — see the note in /api/device/plan: this is the
     // only writer of RESOLVED, and a promise dropped at response-flush would
     // strand the alert OPEN and silence the device for good.
-    if (wasOffline) after(() => resolveOfflineAlerts(device.id));
+    // Backfill runs even after a resolve, not as its else-branch — see the note
+    // on backfillMissedOutage: it also covers a sweep that flipped the status but
+    // never wrote a row, and it no-ops when the gap is already recorded.
+    after(async () => {
+      if (wasOffline) await resolveOfflineAlerts(device.id);
+      await backfillMissedOutage(device, previousLastSeen);
+    });
 
     // `duplicates` is reported so a re-sent backlog is visible rather than silent — a
     // device stuck re-sending the same events (a queue that never drains) otherwise

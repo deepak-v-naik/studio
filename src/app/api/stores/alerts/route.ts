@@ -22,7 +22,13 @@ export async function GET(req: NextRequest) {
         storeId,
         OR: [
           { status: 'OPEN' },
-          { status: 'RESOLVED', resolvedAt: { gte: recentlyResolved } },
+          // Only show a fixed outage to a partner who was actually told it broke.
+          // Without this gate the "back online" entry can be the first they hear of
+          // an incident — exactly what the notification path already refuses to do
+          // (see resolveOfflineAlerts) — and every outage reconstructed by
+          // backfillMissedOutage would surface here: resolved on creation, never
+          // notified, for a problem that was already over before anyone looked.
+          { status: 'RESOLVED', resolvedAt: { gte: recentlyResolved }, partnerNotifiedAt: { not: null } },
         ],
       },
       orderBy: { createdAt: 'desc' },

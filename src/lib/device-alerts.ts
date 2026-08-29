@@ -34,6 +34,26 @@ async function pushToStoreAllChannels(storeId: string, payload: PushPayload): Pr
   ]);
 }
 
+/** Silence after which the sweep calls a screen offline. */
+export const OFFLINE_AFTER_MS = 20 * 60 * 1000;
+/**
+ * Minimum gap before the recovery-side backfill will reconstruct an outage.
+ *
+ * Deliberately NOT OFFLINE_AFTER_MS. That 20 min is a *sampling* threshold: the
+ * sweep asks "is this screen offline right now", so a device whose heartbeat
+ * merely slipped is almost never caught mid-slip. The backfill is different — it
+ * inspects EVERY gap, so any jitter above the threshold becomes a permanent
+ * record. Both player workers are 15-minute PeriodicWorkRequests
+ * (HeartbeatScheduler.kt / PlanFetchScheduler.kt) and Android's Doze defers them
+ * freely, so 20-plus-minute gaps are ordinary on a perfectly healthy screen.
+ *
+ * 60 min is the codebase's own "this is real, not jitter" bar: the sweep's
+ * MISSING_HEARTBEAT_WINDOWS_THRESHOLD (3) x HEARTBEAT_WINDOW_MS (20 min). The
+ * trade is deliberate — outages between 20 and 60 min that the sweep also slept
+ * through stay unrecorded, which is the right way to be wrong: a missing row is
+ * recoverable, a fabricated outage corrupts uptime and trains you to ignore it.
+ */
+export const BACKFILL_MIN_GAP_MS = 60 * 60 * 1000;
 /** Extra downtime past the offline edge before the partner is told. */
 export const PARTNER_NOTIFY_AFTER_MS = 40 * 60 * 1000; // ≈60 min total downtime
 /** Aggregate rather than spam when a whole batch drops at once (mains cut, ISP outage). */
@@ -300,6 +320,112 @@ export async function escalateSustainedOutages(now = new Date()): Promise<number
     return notified; // best-effort
   }
   return notified;
+}
+
+/**
+ * Records an outage that the health sweep never saw.
+ *
+ * The sweep can only notice a screen that is STILL offline at the moment it runs,
+ * and its real cadence is a GitHub Actions schedule (Vercel Hobby allows only one
+ * cron a day) that in practice drifts from the requested 5 minutes out to several
+ * hours. Any outage that starts and ends inside one of those gaps is invisible:
+ * by the time anything looks, the device is ONLINE again, `status` never flipped,
+ * so no alert is opened and `resolveOfflineAlerts` has nothing to close. AH Store
+ * lost 5.4 hours on 2026-08-27 that way and it left no trace anywhere.
+ *
+ * The returning heartbeat closes that hole without depending on the schedule at
+ * all. `previousLastSeen` is the row's value from before this heartbeat's write,
+ * so the gap between it and `now` is exactly how long the screen was silent —
+ * whether or not anyone was watching.
+ *
+ * Written already-RESOLVED and WITHOUT notifying: the outage is over by
+ * definition, so paging the admin or the partner about it now would be noise and
+ * would contradict the "resolution notice is never the first thing they hear"
+ * rule below. It exists so uptime figures and the alert history are honest.
+ * (partnerNotifiedAt stays null, which is what keeps these rows out of the
+ * partner dashboard — see the RESOLVED arm of /api/stores/alerts.)
+ *
+ * Safe to call on EVERY heartbeat, including one where the device was already
+ * OFFLINE and resolveOfflineAlerts ran: the dedup below keys on the gap, so it
+ * no-ops rather than shadowing a sweep-opened row. Calling it unconditionally is
+ * what covers the case where the sweep flipped the status but failed to write an
+ * alert — there the recovery path has nothing to resolve and would otherwise
+ * lose the outage entirely.
+ *
+ * Returns true when a row was written. Never throws — a heartbeat must not fail
+ * because of bookkeeping.
+ */
+export async function backfillMissedOutage(
+  device: {
+    id: string; name: string; storeId: string | null; status?: string;
+    bootedAt?: Date | null; appStartedAt?: Date | null; appVersion?: string | null;
+  },
+  previousLastSeen: Date | null | undefined,
+  now = new Date(),
+): Promise<boolean> {
+  if (!previousLastSeen) return false;
+  // A screen that was never commissioned has no service to have been down.
+  if (device.status === 'PENDING') return false;
+
+  const gapMs = now.getTime() - previousLastSeen.getTime();
+  if (gapMs < BACKFILL_MIN_GAP_MS) return false;
+
+  try {
+    // One row per gap, whoever writes it. Keyed on lastSeenAt because that is the
+    // gap's far edge and every writer agrees on it: the cron stores the same value
+    // in lastSeenAt, so this also refuses to duplicate a sweep-opened alert (OPEN
+    // or already resolved) for the very same outage.
+    const alreadyRecorded = await db.deviceAlert.findFirst({
+      where:  { deviceId: device.id, lastSeenAt: previousLastSeen },
+      select: { id: true },
+    });
+    if (alreadyRecorded) return false;
+
+    const storeName = device.storeId
+      ? (await db.store.findUnique({
+          where: { id: device.storeId }, select: { storeName: true },
+        }).catch(() => null))?.storeName ?? null
+      : null;
+
+    await db.deviceAlert.create({
+      data: {
+        // Deterministic id, not a cuid: the check above is a non-atomic read, and
+        // on recovery the player fires its plan poll and its heartbeat within
+        // milliseconds of each other, so both can pass it and reach this create.
+        // Deriving the id from (device, gap) makes the second insert collide on the
+        // primary key and land in the catch below — the database arbitrates instead
+        // of a read that both callers won. Needs no unique index, hence no migration.
+        id:         `bf-${device.id}-${previousLastSeen.getTime()}`,
+        deviceId:   device.id,
+        storeId:    device.storeId,
+        type:       'OFFLINE',
+        // Always 'warning'. In this file 'critical' is not a magnitude — line ~279
+        // sets it together with partnerNotifiedAt, so it means "the partner was
+        // told". Nobody is told about a backfill, so claiming critical would lie.
+        severity:   'warning',
+        deviceName: device.name,
+        storeName,
+        // startedAt is the last heartbeat, not the detection time: for a gap we
+        // reconstruct after the fact the outage genuinely began when the screen
+        // went quiet, and downtimeSec has to match that or uptime reporting lies.
+        lastSeenAt:  previousLastSeen,
+        startedAt:   previousLastSeen,
+        status:      'RESOLVED',
+        resolvedAt:  now,
+        downtimeSec: Math.round(gapMs / 1000),
+        // No pre-outage snapshot exists to diff against — nothing was watching
+        // when it dropped — so the cause genuinely cannot be derived. Say so
+        // explicitly rather than leaving null, which reads as "not computed yet".
+        cause:           'UNKNOWN',
+        causeConfidence: 'low',
+        causeEvidence:   'Reconstructed from the heartbeat gap when the screen came back. '
+          + 'No health sweep ran during the outage, so no pre-outage snapshot was frozen to compare against.',
+      },
+    });
+    return true;
+  } catch {
+    return false; // table not migrated, or a transient DB error — never break the heartbeat
+  }
 }
 
 /**
