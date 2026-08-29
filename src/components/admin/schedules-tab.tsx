@@ -12,6 +12,7 @@ import {
   type Schedule, type Playlist, type Device, type DeviceGroup, type StoreSearchResult,
   type ScheduleConflict,
 } from '@/lib/backend-api';
+import { willLetterbox, SUGGESTED_RESOLUTION, type ScreenOrientation } from '@/lib/aspect-warning';
 import { toast } from '@/hooks/use-toast';
 import ScheduleCalendar from './schedule-calendar';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -104,6 +105,40 @@ function OrientationIcon({ o, size = 14 }: { o: 'landscape' | 'portrait' | 'any'
   if (o === 'landscape') return <Tv2 style={{ width: size, height: size }} />;
   if (o === 'portrait')  return <Smartphone style={{ width: size, height: size }} />;
   return <RotateCcw style={{ width: size, height: size }} />;
+}
+
+// ─── Aspect-ratio letterbox check ─────────────────────────────────────────────
+// Creatives in a playlist (nested playlists included, max depth 3) whose aspect
+// ratio the player will letterbox on screens of the schedule's orientation — the
+// player fits instead of fills past a 1.35× mismatch (lib/aspect-warning.ts).
+// Dimensions are only known for images measured at upload and videos that finished
+// transcoding; creatives without dimensions are skipped, not flagged.
+function letterboxCreatives(
+  playlistId: string,
+  playlists: Playlist[],
+  orientation: ScreenOrientation,
+): { name: string; width: number; height: number }[] {
+  const out: { name: string; width: number; height: number }[] = [];
+  const seen = new Set<string>();
+  const visit = (id: string, path: Set<string>) => {
+    if (path.has(id) || path.size >= 3) return;
+    const pl = playlists.find((p) => p.id === id);
+    if (!pl) return;
+    for (const item of pl.items) {
+      if (item.childPlaylistId) {
+        visit(item.childPlaylistId, new Set([...path, id]));
+        continue;
+      }
+      const c = item.content;
+      if (!c?.width || !c.height || seen.has(c.id)) continue;
+      if (willLetterbox(c.width, c.height, orientation)) {
+        seen.add(c.id);
+        out.push({ name: c.name, width: c.width, height: c.height });
+      }
+    }
+  };
+  visit(playlistId, new Set());
+  return out;
 }
 
 // ─── Targeting preview helper ─────────────────────────────────────────────────
@@ -484,6 +519,14 @@ export default function SchedulesTab() {
     g.name.toLowerCase().includes(groupSearch.toLowerCase())
   );
 
+  // Letterbox warning for the form's playlist + orientation. 'any' targets a mixed
+  // fleet where fit depends on each screen, so no single verdict applies — skip.
+  const warnOrientation: ScreenOrientation | null =
+    form.orientation === 'any' ? null : form.orientation;
+  const aspectIssues = warnOrientation && form.playlistId
+    ? letterboxCreatives(form.playlistId, playlists, warnOrientation)
+    : [];
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -626,6 +669,28 @@ export default function SchedulesTab() {
                   );
                 })}
               </div>
+              {warnOrientation && aspectIssues.length > 0 && (
+                <div className="flex gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
+                  <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="text-[11px] font-semibold text-amber-700">
+                      {aspectIssues.length === 1
+                        ? `${aspectIssues[0].name} (${aspectIssues[0].width}×${aspectIssues[0].height}) will letterbox on ${warnOrientation} screens`
+                        : `${aspectIssues.length} creatives in this playlist will letterbox on ${warnOrientation} screens`}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      {aspectIssues.length > 1 && (
+                        <>
+                          {aspectIssues.slice(0, 4).map((i) => `${i.name} (${i.width}×${i.height})`).join(', ')}
+                          {aspectIssues.length > 4 ? ` +${aspectIssues.length - 4} more` : ''}
+                          {' — '}
+                        </>
+                      )}
+                      The player shrinks these to fit instead of filling the screen. Upload a {SUGGESTED_RESOLUTION[warnOrientation]} version for full screen.
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="rounded-xl border border-border bg-muted/30 px-3 py-2.5 space-y-1">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Identifying rotation direction</p>
                 <p className="text-[11px] text-muted-foreground leading-relaxed">
@@ -993,6 +1058,11 @@ export default function SchedulesTab() {
                 const isAlwaysOnRow = s.endAt > '2090-01-01';
                 const isEditing = editId === s.id;
 
+                const rowOrientation = (s.orientation as 'landscape' | 'portrait' | 'any') ?? 'portrait';
+                const rowIssues = rowOrientation !== 'any' && pl
+                  ? letterboxCreatives(pl.id, playlists, rowOrientation)
+                  : [];
+
                 // Build targeting label
                 let targetingLabel: React.ReactNode = 'All screens';
                 let targetingIcon: React.ElementType = Globe;
@@ -1019,7 +1089,18 @@ export default function SchedulesTab() {
                         <span className="ml-1.5 text-[9px] font-bold bg-orange-500/10 text-orange-600 px-1.5 py-0.5 rounded-full">P{s.priority}</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{pl?.name ?? s.playlist?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                      {pl?.name ?? s.playlist?.name ?? '—'}
+                      {rowIssues.length > 0 && rowOrientation !== 'any' && (
+                        <span
+                          title={`${rowIssues.map((i) => `${i.name} (${i.width}×${i.height})`).join(', ')} will letterbox on ${rowOrientation} screens — upload ${SUGGESTED_RESOLUTION[rowOrientation]} versions for full screen`}
+                          className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-600"
+                        >
+                          <AlertCircle className="h-2.5 w-2.5" />
+                          {rowIssues.length} letterbox
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
                         <TargetIcon className="h-3 w-3" />

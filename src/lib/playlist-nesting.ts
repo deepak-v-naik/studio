@@ -90,6 +90,10 @@ export type PlanMediaItem = {
   order:      number;
   hevcUrl:    string | undefined;
   hevcMd5:    string | undefined;
+  // Intrinsic pixel size when known (images measured at upload, videos filled by the
+  // transcode callback) — lets players pick scale modes without probing the media.
+  width:      number | undefined;
+  height:     number | undefined;
 };
 
 export type PlanNestedNode =
@@ -105,6 +109,7 @@ const PLAN_ITEM_SELECT = {
       id: true, objectKey: true, md5: true, type: true,
       durationMs: true, hevcObjectKey: true, hevcMd5: true,
       originalObjectKey: true, originalMd5: true,
+      width: true, height: true,
     },
   },
 } as const;
@@ -117,6 +122,7 @@ type PlanItemRow = {
     id: string; objectKey: string; md5: string; type: string;
     durationMs: number | null; hevcObjectKey: string | null; hevcMd5: string | null;
     originalObjectKey: string | null; originalMd5: string | null;
+    width: number | null; height: number | null;
   } | null;
 };
 
@@ -152,6 +158,8 @@ function toMediaItem(row: PlanItemRow, order: number, safeRendition: boolean): P
     order,
     hevcUrl:    c.hevcObjectKey ? publicUrl(c.hevcObjectKey) : undefined,
     hevcMd5:    c.hevcMd5 ?? undefined,
+    width:      c.width ?? undefined,
+    height:     c.height ?? undefined,
   };
 }
 

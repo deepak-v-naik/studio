@@ -143,7 +143,9 @@ curl https://wearealive.in/api/device/plan \
       "durationMs": 30000,
       "order": 1,
       "hevcUrl": "https://r2.wearealive.in/content/brand-promo-30s-hevc.mp4",
-      "hevcMd5": "5d41402abc4b2a76b9719d911017c592"
+      "hevcMd5": "5d41402abc4b2a76b9719d911017c592",
+      "width": 1080,
+      "height": 1920
     },
     {
       "contentId": "clx7k2m0f0000cnt5678efgh",
@@ -152,7 +154,9 @@ curl https://wearealive.in/api/device/plan \
       "md5": "098f6bcd4621d373cade4e832627b4f6",
       "type": "IMAGE",
       "durationMs": 8000,
-      "order": 2
+      "order": 2,
+      "width": 1080,
+      "height": 1920
     }
   ],
   "timeline": [
@@ -217,6 +221,8 @@ curl https://wearealive.in/api/device/plan \
 | `order` | `number` | Sort order for playlist (ascending) |
 | `hevcUrl` | `string` (optional) | Download URL for an HEVC/H.265 rendition of the same video, when one exists. Present only for `VIDEO` items that have been (re-)transcoded since this field was added. |
 | `hevcMd5` | `string` (optional) | MD5 hex of `hevcUrl`'s file. Always present alongside `hevcUrl`. |
+| `width` | `number` (optional) | Intrinsic pixel width. Present for images measured in-browser at upload and videos that have been transcoded; absent for legacy uploads. Lets the player pick a scale mode (fill vs letterbox) before the file is downloaded/decoded. |
+| `height` | `number` (optional) | Intrinsic pixel height. Present exactly when `width` is. |
 
 **Choosing between `url` and `hevcUrl`:** most devices should just use `url`/`md5` (H.264 —
 universally hardware-decodable across the fleet). Only prefer `hevcUrl`/`hevcMd5` when the

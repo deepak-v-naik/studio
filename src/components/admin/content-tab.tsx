@@ -38,6 +38,28 @@ async function videoDurationMs(file: File): Promise<number | undefined> {
   });
 }
 
+async function imageDimensions(file: File): Promise<{ width: number; height: number } | undefined> {
+  // Intrinsic pixel size, read in-browser before upload and persisted with the
+  // content row — the schedule UI uses it to warn when a creative's aspect ratio
+  // will letterbox on the target screens (the player fits instead of fills past a
+  // 1.35× aspect mismatch). Video dimensions come from the transcode callback.
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img.naturalWidth > 0 && img.naturalHeight > 0
+        ? { width: img.naturalWidth, height: img.naturalHeight }
+        : undefined);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(undefined);
+    };
+    img.src = url;
+  });
+}
+
 async function md5Hex(file: File): Promise<string> {
   // Web Crypto doesn't support MD5; use full SHA-256 hex as the cache key.
   // Must NOT be truncated to 32 chars: the player's hashMatches() picks MD5
@@ -166,6 +188,7 @@ export default function ContentTab() {
       try {
         const hash = await md5Hex(file);
         const durationMs = isVideo ? await videoDurationMs(file) : undefined;
+        const dims = isImage ? await imageDimensions(file) : undefined;
 
         // Step 1: create DB record + get objectKey
         const { id: contentId, objectKey } = await initiateUpload({
@@ -175,6 +198,8 @@ export default function ContentTab() {
           sizeBytes: file.size,
           md5:       hash,
           durationMs,
+          width:     dims?.width,
+          height:    dims?.height,
         });
 
         // Step 2: ask the server to presign a PUT for this exact key + content type.
@@ -411,7 +436,10 @@ export default function ContentTab() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">{fmtBytes(c.sizeBytes)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {fmtBytes(c.sizeBytes)}
+                    {c.width && c.height ? <span className="block text-[10px] text-muted-foreground/60">{c.width}×{c.height}</span> : null}
+                  </td>
                   <td className="px-4 py-3 text-muted-foreground/60">{fmtDate(c.createdAt)}</td>
                   <td className="px-4 py-3 max-w-[200px]">
                     {editTagId === c.id ? (

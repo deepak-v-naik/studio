@@ -100,6 +100,10 @@ export type Content = {
   md5:         string;
   sizeBytes:   number;
   durationMs?: number;
+  // Intrinsic pixel size — images measured in-browser at upload; videos filled by the
+  // transcode callback. Absent for legacy uploads.
+  width?:      number;
+  height?:     number;
   createdAt:   string;
   tags:        string[];
   folder?:     string;
@@ -349,6 +353,7 @@ export const updateContentMeta = (id: string, body: { tags?: string[]; folder?: 
 
 export const initiateUpload = (body: {
   name: string; type: 'image' | 'video'; sizeBytes: number; md5: string; mimeType?: string; durationMs?: number;
+  width?: number; height?: number;
 }) =>
   apiFetch<{ id: string; uploadUrl: string; objectKey: string }>('/api/content', {
     method: 'POST',
