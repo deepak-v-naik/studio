@@ -77,6 +77,14 @@ export async function POST(req: NextRequest) {
       for (const [k, v] of Object.entries(body.notes)) safeNotes[k] = String(v);
     }
 
+    // Bind the ENTITLEMENT to the order, server-side. The amount was already
+    // recomputed here from these exact numbers; stamping them into the order's
+    // notes means verify-payment can read back what was actually paid for
+    // instead of trusting the browser. Written last so a client-supplied note
+    // of the same name cannot override it.
+    safeNotes.alive_screens = String(screens);
+    safeNotes.alive_months  = String(months);
+
     const credentials = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
     const response = await fetch('https://api.razorpay.com/v1/orders', {
       method: 'POST',

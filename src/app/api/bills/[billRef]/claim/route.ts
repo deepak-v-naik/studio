@@ -23,10 +23,37 @@ export async function POST(
     const bill = await db.bill.findUnique({ where: { billRef } });
     if (!bill) return NextResponse.json({ error: 'Bill not found' }, { status: 404 });
 
-    const customer = await db.customer.upsert({
+    // A bill may only be claimed once. Without this, anyone who can guess a
+    // billRef (they are time-based and enumerable) could re-point an already
+    // claimed bill onto another customer's history.
+    if (bill.customerId) {
+      return NextResponse.json({ error: 'This bill has already been claimed.' }, { status: 409 });
+    }
+
+    // The Customer.token is a permanent bearer credential for the whole
+    // purchase history at /api/customer/bills. It must therefore NEVER be
+    // returned for a customer that already exists — a phone number is not a
+    // secret, so doing so would hand any caller that customer's account.
+    // A new customer is safe: the caller just proved possession of an unclaimed
+    // bill, and the number has no history attached to it yet.
+    const existing = await db.customer.findUnique({
       where:  { phone },
-      create: { phone, name, token: randomUUID() },
-      update: {},
+      select: { id: true },
+    });
+
+    if (existing) {
+      // Attach the bill so it is not lost, but issue no credential. The shopper
+      // signs in on the device that already holds their token.
+      await db.bill.update({ where: { billRef }, data: { customerId: existing.id } });
+      return NextResponse.json({
+        ok: true,
+        alreadyRegistered: true,
+        message: 'This bill has been added to your ALIVE account. Open it on the phone where you first registered.',
+      });
+    }
+
+    const customer = await db.customer.create({
+      data: { phone, name, token: randomUUID() },
     });
 
     const updated = await db.bill.update({

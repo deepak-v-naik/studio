@@ -57,8 +57,28 @@ export async function POST(req: NextRequest) {
       if (!orderRes.ok) {
         return NextResponse.json({ success: false, error: 'Could not confirm the order amount. Please contact hello@wearealive.in.' }, { status: 502 });
       }
-      const order = await orderRes.json() as { amount?: number };
+      const order = await orderRes.json() as {
+        amount?: number;
+        notes?: Record<string, string>;
+      };
       const chargedRupees = Math.round(Number(order.amount ?? 0) / 100);
+
+      // Entitlement comes from the ORDER, not the request body. create-order
+      // stamped the screens/months it actually priced into the order notes, so
+      // a client cannot pay for 1 screen × 1 month and then claim 50 × 12 by
+      // editing the body. Orders created before this binding existed have no
+      // notes — those fall back to the body but are clamped to the same
+      // self-serve bounds create-order enforces.
+      const clamp = (v: unknown, lo: number, hi: number, dflt: number) => {
+        const n = Math.floor(Number(v));
+        return Number.isFinite(n) ? Math.min(Math.max(n, lo), hi) : dflt;
+      };
+      const paidScreens = order.notes?.alive_screens != null
+        ? clamp(order.notes.alive_screens, 1, 50, 1)
+        : clamp(campaign.screens, 1, 50, 1);
+      const paidMonths = order.notes?.alive_months != null
+        ? clamp(order.notes.alive_months, 1, 12, 1)
+        : clamp(campaign.months, 1, 12, 1);
 
       const brand = await db.brand.findFirst({ where: { email: campaign.email } });
 
@@ -74,6 +94,8 @@ export async function POST(req: NextRequest) {
             paymentId: razorpay_payment_id,
             status: 'active',
             totalAmount: chargedRupees,
+            screens: paidScreens,
+            months:  paidMonths,
             ...(Number.isFinite(ppw) && ppw > 0 ? { pricePerScreen: ppw } : {}),
           },
         });
@@ -85,8 +107,8 @@ export async function POST(req: NextRequest) {
             contactName:    campaign.contactName,
             email:          campaign.email,
             phone:          campaign.phone ?? undefined,
-            screens:        campaign.screens    ?? 1,
-            months:         campaign.months     ?? 1,
+            screens:        paidScreens,
+            months:         paidMonths,
             startDate:      new Date(campaign.startDate),
             pricePerScreen: campaign.pricePerScreen,
             totalAmount:    chargedRupees,
