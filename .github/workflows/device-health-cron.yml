@@ -1,31 +1,93 @@
 name: Device health cron
 
-# Vercel's Hobby plan only allows a once-daily cron in vercel.json, but the
-# device-health check needs to run every 5 minutes to keep offline detection
-# meaningful (see src/app/api/cron/device-health/route.ts). This workflow is
-# the real schedule; the vercel.json cron is just a once-a-day fallback in
-# case this workflow ever stops firing.
+# Offline detection backstop.
 #
-# Requires a repo secret named CRON_SECRET matching the Vercel project's
-# CRON_SECRET env var. Without it this workflow runs but every call gets a
-# 401 from the endpoint.
+# Vercel's Hobby plan allows only a once-daily cron in vercel.json, so this
+# workflow is the real schedule for src/app/api/cron/device-health.
+#
+# WHY THIS LOOPS INSTEAD OF JUST ASKING FOR '*/5':
+# GitHub does not honour high-frequency schedules on a best-effort queue. Asked
+# for every 5 minutes, this workflow was observed firing 0.4h to 11.4h apart
+# (gh run list, 2026-08-26..29). A screen that died just after a firing stayed
+# undetected until the next one — AH Store's outage on 2026-08-27 sat 7.6h before
+# it raised an alert, and a 5.4h outage the same day was never recorded at all.
+#
+# So each run now polls for an hour of its own accord rather than trusting the
+# scheduler to come back. One firing covers a full hour at a true 5-minute
+# cadence, which turns GitHub's drift from "hours of blindness" into "at worst a
+# late start". The schedule stays frequent so a dropped run is picked up soon,
+# and `concurrency` keeps overlapping firings from stacking runners.
+#
+# Minutes are free: this repository is public. If it is ever made private, cut
+# LOOP_MINUTES or this will consume the monthly Actions allowance.
+#
+# This is only the backstop. The primary trigger is live traffic — every device
+# heartbeat and every admin panel load drives the same sweep in-process (see
+# sweepOfflineDevices in src/lib/device-alerts.ts), which needs no scheduler.
+#
+# Requires a repo secret CRON_SECRET matching the Vercel project's CRON_SECRET.
+# The endpoint now fails CLOSED, so a missing or stale secret means every call
+# 401s and detection silently stops — the failure check below makes that loud.
 
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch: {}
 
+# Never let two firings poll at once; a late run is simply dropped while the
+# previous one is still covering the window.
+concurrency:
+  group: device-health-cron
+  cancel-in-progress: false
+
 jobs:
   ping:
     runs-on: ubuntu-latest
+    # Generous vs LOOP_MINUTES so the runner is reclaimed if a curl wedges.
+    timeout-minutes: 70
+    env:
+      LOOP_MINUTES: 60
+      INTERVAL_SECONDS: 300
     steps:
-      - name: Call device-health endpoint
+      - name: Poll device-health for the hour
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            https://wearealive.in/api/cron/device-health)
-          echo "Response status: $status"
-          if [ "$status" -ge 400 ]; then
-            echo "device-health cron call failed with status $status"
+          set -uo pipefail
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET is not set - every call would 401 and offline detection would stop."
+            exit 1
+          fi
+
+          deadline=$(( $(date +%s) + LOOP_MINUTES * 60 ))
+          calls=0; failures=0; last_status=""
+
+          while :; do
+            status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              https://wearealive.in/api/cron/device-health) || status="000"
+            calls=$(( calls + 1 ))
+            last_status="$status"
+
+            if [ "$status" -ge 400 ] || [ "$status" = "000" ]; then
+              failures=$(( failures + 1 ))
+              echo "$(date -u +%H:%M:%S)  status=$status  FAIL ($failures)"
+            else
+              echo "$(date -u +%H:%M:%S)  status=$status  ok"
+            fi
+
+            now=$(date +%s)
+            if [ $(( now + INTERVAL_SECONDS )) -ge "$deadline" ]; then
+              break
+            fi
+            sleep "$INTERVAL_SECONDS"
+          done
+
+          echo "calls=$calls failures=$failures last_status=$last_status"
+          # Fail only if EVERY call failed. A single blip during a deploy is not
+          # worth a red run, but a wholly unreachable endpoint (or a rotated
+          # secret) means detection is dead and must be noticed.
+          if [ "$failures" -eq "$calls" ]; then
+            echo "::error::every device-health call failed (last status $last_status) - offline detection is not running."
             exit 1
           fi

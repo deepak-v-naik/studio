@@ -3,9 +3,10 @@
 // Query params: ?status=ONLINE|OFFLINE|PENDING&q=&groupName=&storeId=&city=&cursor=&take=50&linked=true|false
 // Auth: admin-password header
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
+import { sweepOfflineDevices } from '@/lib/device-alerts';
 
 // Player heartbeat is a WorkManager PeriodicWorkRequest, clamped to a 15-min
 // floor by Android regardless of the requested interval — 20 min matches the
@@ -28,6 +29,13 @@ function effectiveStatus(lastSeen: Date | null, dbStatus: string): 'ONLINE' | 'O
 
 export async function GET(req: NextRequest) {
   if (!adminGuard(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Opening the panel also drives the offline sweep. effectiveStatus() below already
+  // derives online/offline from lastSeen, so the LIST was always right — but the
+  // stored status column is what openOfflineAlerts fires on, and only the drifting
+  // cron ever flipped it. This is the trigger of last resort for the case device
+  // heartbeats cannot cover: every screen dark, so no heartbeat left to ride.
+  // after(), so an admin request never waits on notification fan-out.
+  after(() => sweepOfflineDevices());
   try {
     const p         = req.nextUrl.searchParams;
     const q         = p.get('q')?.trim() ?? '';

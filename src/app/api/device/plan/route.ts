@@ -17,7 +17,7 @@ import { resolvePlaylistTree, pickRendition, type PlanMediaItem, type PlanNested
 import { istToday, isOpenOn, buildSlotLoop, SLOT_DURATION_MS } from '@/lib/slots';
 import { resolveFillerCampaign } from '@/lib/slots-db';
 import { isDevicePaired } from '@/lib/device-auth';
-import { resolveOfflineAlerts, backfillMissedOutage } from '@/lib/device-alerts';
+import { resolveOfflineAlerts, backfillMissedOutage, sweepOfflineDevices } from '@/lib/device-alerts';
 
 async function authenticate(req: NextRequest) {
   const auth  = req.headers.get('authorization') ?? '';
@@ -478,6 +478,11 @@ export async function GET(req: NextRequest) {
     after(async () => {
       if (device.status === 'OFFLINE') await resolveOfflineAlerts(device.id, now);
       await backfillMissedOutage(device, device.lastSeen, now);
+      // Ride this heartbeat to check the REST of the fleet for the offline edge.
+      // The health cron is a GitHub Actions schedule that drifts by hours, so any
+      // live screen polling every 15 min is a far more dependable clock than it is.
+      // Throttled per instance and a no-op UPDATE in the steady state.
+      await sweepOfflineDevices(now);
     });
 
     return NextResponse.json({
