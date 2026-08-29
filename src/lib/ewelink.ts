@@ -53,7 +53,18 @@ function appSecret(): string {
   return secret;
 }
 
+// eWeLink's only datacenter regions. `region` arrives from the OAuth callback
+// query string and is interpolated into the request host, so it MUST be
+// allowlisted — an unvalidated value like "attacker.com/" would turn every
+// signed server call into an SSRF to an arbitrary origin.
+const EWELINK_REGIONS = new Set(['us', 'eu', 'as', 'cn']);
+
+export function isValidRegion(region: string | null | undefined): region is string {
+  return typeof region === 'string' && EWELINK_REGIONS.has(region);
+}
+
 export function apiHost(region: string): string {
+  if (!isValidRegion(region)) throw new Error(`Invalid eWeLink region: ${region}`);
   return `https://${region}-apia.coolkit.${region === 'cn' ? 'cn' : 'cc'}`;
 }
 

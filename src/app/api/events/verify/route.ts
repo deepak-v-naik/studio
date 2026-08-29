@@ -9,7 +9,7 @@ import crypto from 'crypto';
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 function computeRowHash(id: string, deviceId: string, mediaId: string, startedAt: string, endedAt: string, durationMs: number, tag: string | null, prevHash: string | null): string {

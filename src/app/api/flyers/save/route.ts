@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     // behalf, and the store partner app (storeId — no session, same as every other
     // store-partner route, see resolveStoreId).
     const pw = req.headers.get('admin-password') ?? '';
-    const isAdmin = !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+    const isAdmin = !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
     const storeId = isAdmin ? null : await resolveStoreId(body.storeId);
     if (!isAdmin && !storeId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

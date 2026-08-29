@@ -34,7 +34,12 @@ export async function POST(req: NextRequest) {
       .update(body)
       .digest('hex');
 
-    if (expected !== razorpay_signature) {
+    // Constant-time compare so the signature can't be recovered via timing.
+    // timingSafeEqual throws on a length mismatch, so gate on length first.
+    const sig = typeof razorpay_signature === 'string' ? razorpay_signature : '';
+    const ok = sig.length === expected.length
+      && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+    if (!ok) {
       return NextResponse.json({ success: false, error: 'Signature mismatch' }, { status: 400 });
     }
 

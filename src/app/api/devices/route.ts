@@ -15,8 +15,9 @@ const OFFLINE_THRESHOLD_MS = 20 * 60 * 1000;
 const DEFAULT_TAKE = 50;
 
 function adminGuard(req: NextRequest) {
+  // Fail CLOSED: a missing ADMIN_PASSWORD must authorize nobody (see admin-auth.ts).
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 function effectiveStatus(lastSeen: Date | null, dbStatus: string): 'ONLINE' | 'OFFLINE' | 'PENDING' {

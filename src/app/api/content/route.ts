@@ -11,12 +11,13 @@ import { randomUUID } from 'crypto';
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 const BASE_CONTENT_SELECT = {
   id: true, name: true, type: true, objectKey: true,
   md5: true, sizeBytes: true, durationMs: true, uploadedAt: true,
+  width: true, height: true,
 };
 
 export async function GET(req: NextRequest) {
@@ -61,6 +62,8 @@ export async function GET(req: NextRequest) {
         md5:        c.md5,
         sizeBytes:  Number(c.sizeBytes),
         durationMs: c.durationMs ?? undefined,
+        width:      c.width ?? undefined,
+        height:     c.height ?? undefined,
         createdAt:  c.uploadedAt.toISOString(),
         tags:       extra?.tags ?? [],
         folder:     extra?.folder ?? undefined,
@@ -77,17 +80,25 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!adminGuard(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
-    const { name, type, sizeBytes, md5, durationMs, mimeType } = await req.json() as {
+    const { name, type, sizeBytes, md5, durationMs, mimeType, width, height } = await req.json() as {
       name: string;
       type: 'image' | 'video';
       sizeBytes: number;
       md5: string;
       durationMs?: number;
       mimeType?: string;
+      width?: number;
+      height?: number;
     };
     if (!name || !type || !sizeBytes || !md5) {
       return NextResponse.json({ error: 'name, type, sizeBytes, md5 required' }, { status: 400 });
     }
+
+    // Intrinsic pixel size, measured client-side before upload (images). Both or
+    // neither — a lone dimension can't drive the aspect-ratio letterbox warning.
+    const dims = Number.isFinite(width) && Number.isFinite(height) && width! > 0 && height! > 0
+      ? { width: Math.round(width!), height: Math.round(height!) }
+      : {};
 
     const MIME_TO_EXT: Record<string, string> = {
       'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
@@ -101,7 +112,7 @@ export async function POST(req: NextRequest) {
     const uploadUrl = await signedUploadUrl(objectKey, contentType, 900);
 
     const content = await db.content.create({
-      data: { name, type: dbType, objectKey, md5, sizeBytes, durationMs: durationMs ?? null },
+      data: { name, type: dbType, objectKey, md5, sizeBytes, durationMs: durationMs ?? null, ...dims },
     });
 
     return NextResponse.json({ id: content.id, uploadUrl, objectKey });

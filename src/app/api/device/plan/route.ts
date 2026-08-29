@@ -237,7 +237,7 @@ export async function GET(req: NextRequest) {
         const contents = contentIds.length
           ? await db.content.findMany({
               where:  { id: { in: contentIds } },
-              select: { id: true, objectKey: true, md5: true, type: true, hevcObjectKey: true, hevcMd5: true, originalObjectKey: true, originalMd5: true },
+              select: { id: true, objectKey: true, md5: true, type: true, hevcObjectKey: true, hevcMd5: true, originalObjectKey: true, originalMd5: true, width: true, height: true },
             })
           : [];
         const contentMap = new Map(contents.map((c) => [c.id, c]));
@@ -256,6 +256,8 @@ export async function GET(req: NextRequest) {
             order:      a.slotPosition,
             hevcUrl:    c.hevcObjectKey ? publicUrl(c.hevcObjectKey) : undefined,
             hevcMd5:    c.hevcMd5 ?? undefined,
+            width:      c.width ?? undefined,
+            height:     c.height ?? undefined,
             slotPosition: a.slotPosition,
             isFiller:     a.isFiller,
             campaignId:   a.campaignId,

@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server';
 import { withApiHandler } from '@/lib/with-api-handler';
 import { db } from '@/lib/db';
-import { exchangeCode, verifyOauthState } from '@/lib/ewelink';
+import { exchangeCode, verifyOauthState, isValidRegion } from '@/lib/ewelink';
 
 export const GET = withApiHandler('/api/ewelink/callback', 'admin', async (req) => {
   const code = req.nextUrl.searchParams.get('code');
@@ -20,6 +20,8 @@ export const GET = withApiHandler('/api/ewelink/callback', 'admin', async (req) 
 
   if (!verifyOauthState(state)) return fail('invalid or expired state — retry Connect eWeLink');
   if (!code || !region) return fail('missing code or region');
+  // Reject a forged region before it ever reaches the request host (SSRF guard).
+  if (!isValidRegion(region)) return fail('invalid region');
 
   try {
     const redirectUrl = `${req.nextUrl.origin}/api/ewelink/callback`;

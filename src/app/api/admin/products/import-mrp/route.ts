@@ -12,7 +12,7 @@ export const maxDuration = 60;
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 type ImportRow = { key: string; mrp: number };

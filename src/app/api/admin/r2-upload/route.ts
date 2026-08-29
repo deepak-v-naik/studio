@@ -5,7 +5,7 @@ export const maxDuration = 60; // allow up to 60s for large file uploads
 
 function checkAdmin(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 // POST — server-side upload (avoids browser CORS restrictions on R2)

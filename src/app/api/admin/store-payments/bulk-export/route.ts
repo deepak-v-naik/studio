@@ -8,7 +8,7 @@ import { db } from '@/lib/db';
 
 function checkAdmin(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 function fmtMonth(m: string) {

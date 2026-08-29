@@ -18,7 +18,7 @@ import type { Prisma } from '@prisma/client';
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 const ROW_CAP = 2000; // hard cap on rows returned per page (summary is unaffected)

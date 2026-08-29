@@ -8,8 +8,9 @@ import { db } from '@/lib/db';
 import { pushCommand, type DeviceCommandType } from '@/lib/fcm';
 
 function adminGuard(req: NextRequest) {
+  // Fail CLOSED: a missing ADMIN_PASSWORD must authorize nobody (see admin-auth.ts).
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 // plan_updated is pushed automatically by schedule/playlist mutations (see fcm.ts

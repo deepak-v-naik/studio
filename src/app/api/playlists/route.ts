@@ -13,7 +13,7 @@ import { validateNesting, type PlaylistItemInput } from '@/lib/playlist-nesting'
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -32,6 +32,8 @@ function normalizePlaylist(pl: any) {
         md5:        item.content.md5,
         sizeBytes:  Number(item.content.sizeBytes),
         durationMs: item.content.durationMs ?? undefined,
+        width:      item.content.width ?? undefined,
+        height:     item.content.height ?? undefined,
         createdAt:  (item.content.uploadedAt as Date).toISOString(),
       } : null,
       childPlaylist: item.childPlaylist ?? null,
@@ -42,6 +44,7 @@ function normalizePlaylist(pl: any) {
 const CONTENT_SELECT = {
   id: true, name: true, type: true, objectKey: true,
   md5: true, sizeBytes: true, durationMs: true, uploadedAt: true,
+  width: true, height: true,
 };
 
 const ITEMS_INCLUDE = {

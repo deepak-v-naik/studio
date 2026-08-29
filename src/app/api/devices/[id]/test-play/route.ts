@@ -18,7 +18,7 @@ const TEST_DURATION_MINS = 3;
 
 function adminGuard(req: NextRequest) {
   const pw = req.headers.get('admin-password') ?? '';
-  return !process.env.ADMIN_PASSWORD || pw === process.env.ADMIN_PASSWORD;
+  return !!process.env.ADMIN_PASSWORD && pw === process.env.ADMIN_PASSWORD;
 }
 
 /** Playlist used for tests: the admin-configured one, else the smallest playlist
