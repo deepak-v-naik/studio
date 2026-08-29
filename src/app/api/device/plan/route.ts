@@ -16,6 +16,7 @@ import { getOrCreateCorrelationId, hashStack, recordError } from '@/lib/telemetr
 import { resolvePlaylistTree, pickRendition, type PlanMediaItem, type PlanNestedNode } from '@/lib/playlist-nesting';
 import { istToday, isOpenOn, buildSlotLoop, SLOT_DURATION_MS } from '@/lib/slots';
 import { resolveFillerCampaign } from '@/lib/slots-db';
+import { isDevicePaired } from '@/lib/device-auth';
 import { resolveOfflineAlerts } from '@/lib/device-alerts';
 
 async function authenticate(req: NextRequest) {
@@ -172,6 +173,12 @@ export async function GET(req: NextRequest) {
   const device = await authenticate(req);
   if (device === 'gone') return NextResponse.json({ error: 'Device deleted' }, { status: 410 });
   if (!device) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // A claim token alone does not entitle a screen to content — an operator must
+  // have confirmed the on-screen pairing code first (see isDevicePaired). 403,
+  // not 410: the device should keep polling pairing-status, not decommission.
+  if (!isDevicePaired(device)) {
+    return NextResponse.json({ error: 'Device not paired' }, { status: 403 });
+  }
 
   const now       = new Date();
   const windowEnd = new Date(now.getTime() + 72 * 60 * 60 * 1000);

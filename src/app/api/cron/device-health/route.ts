@@ -25,6 +25,7 @@ import { db } from '@/lib/db';
 import { notifyAdminWA } from '@/lib/notify';
 import { openOfflineAlerts, escalateSustainedOutages } from '@/lib/device-alerts';
 import { recordError, hashStack, getOrCreateCorrelationId } from '@/lib/telemetry';
+import { isCronAuthorized } from '@/lib/cron-auth';
 
 const UPTIME_DROP_THRESHOLD_PCT = 15;
 const OFFLINE_TRANSITION_THRESHOLD = 3;
@@ -33,7 +34,7 @@ const HEARTBEAT_WINDOW_MS = 20 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') ?? '';
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(auth)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

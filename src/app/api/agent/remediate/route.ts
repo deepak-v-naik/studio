@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
+import { isCronAuthorized } from '@/lib/cron-auth';
 
 type AgentOption = {
   rank: number;
@@ -80,7 +81,7 @@ async function askDiagnosticAgent(context: Record<string, unknown>): Promise<Age
 
 export async function POST(req: NextRequest) {
   const auth = req.headers.get('authorization') ?? '';
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(auth)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

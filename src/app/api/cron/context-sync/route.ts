@@ -3,10 +3,11 @@ import { db } from '@/lib/db';
 import { collectAllContextSources } from '@/lib/context-engine/collectors';
 import { embedText, upsertContextDocuments } from '@/lib/context-engine/indexer';
 import { normalizeContextRecord } from '@/lib/context-engine/normalizers';
+import { isCronAuthorized } from '@/lib/cron-auth';
 
 export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') ?? '';
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(auth)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

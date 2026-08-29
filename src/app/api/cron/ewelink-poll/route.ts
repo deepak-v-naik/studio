@@ -16,13 +16,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { ewelinkConfigured, getLinkedAccount, listThings, readPowerParams } from '@/lib/ewelink';
+import { isCronAuthorized } from '@/lib/cron-auth';
 
 const MAX_INTERVAL_MS = 30 * 60 * 1000;
 const RETENTION_DAYS = 90;
 
 export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') ?? '';
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(auth)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

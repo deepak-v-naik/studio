@@ -4,10 +4,11 @@ import { db } from '@/lib/db';
 import { collectMarketSentimentSignals } from '@/lib/data-sources/market-sentiment';
 import { collectCompetitorActivitySignals } from '@/lib/data-sources/competitor-activity';
 import { collectInfraCostEfficiencySignals } from '@/lib/data-sources/infra-cost-efficiency';
+import { isCronAuthorized } from '@/lib/cron-auth';
 
 export async function POST(req: NextRequest) {
   const auth = req.headers.get('authorization') ?? '';
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(auth)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

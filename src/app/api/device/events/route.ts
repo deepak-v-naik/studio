@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse, after } from 'next/server';
 import { db } from '@/lib/db';
-import { verifyDeviceToken } from '@/lib/device-auth';
+import { verifyDeviceToken, isDevicePaired } from '@/lib/device-auth';
 import crypto from 'crypto';
 import { getOrCreateCorrelationId, hashStack, recordError } from '@/lib/telemetry';
 import { respond } from '@/lib/api-envelope';
@@ -198,8 +198,63 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(envelope);
     }
 
+    // Proof-of-play is billable evidence, so an unpaired device must not be able
+    // to write it. The heartbeat/telemetry path above deliberately still runs for
+    // unpaired devices — an operator needs to see a screen is alive in order to
+    // confirm its pairing code — but the ledger stays closed until it is.
+    if (!isDevicePaired(device)) {
+      const envelope = await respond({ accepted: 0, error: 'Device not paired' }, { route, request: { correlationId, eventsCount: events.length }, outcome: 'unauthorized', policyFlags: ['device_unpaired'], errorCategory: 'auth', startedAtMs });
+      return NextResponse.json(envelope, { status: 403 });
+    }
+
     // Cap batch size to prevent abuse
     const batch = events.slice(0, 500);
+
+    // Reject physically impossible timings before they reach the ledger. The
+    // client supplies these, so without bounds a device could book a single
+    // "play" lasting a year, or backdate/forward-date plays to land in whichever
+    // billing period suited it. Small skew is tolerated — screens run their own
+    // clocks and NTP repair is best-effort.
+    const nowMs = Date.now();
+    const MAX_DURATION_MS = 6 * 60 * 60 * 1000;   // 6 h — far above any real item
+    const MAX_FUTURE_MS   = 60 * 60 * 1000;       // 1 h of forward clock skew
+    const MAX_AGE_MS      = 30 * 24 * 60 * 60 * 1000; // 30 d of offline backlog
+    const plausible = (ev: PlayEventInput): boolean => {
+      const s = new Date(ev.startedAt).getTime();
+      const e = new Date(ev.endedAt).getTime();
+      if (!Number.isFinite(s) || !Number.isFinite(e)) return false;
+      if (s > nowMs + MAX_FUTURE_MS) return false;
+      if (s < nowMs - MAX_AGE_MS) return false;
+      if (e < s) return false;
+      const d = Number(ev.durationMs);
+      return Number.isFinite(d) && d >= 0 && d <= MAX_DURATION_MS;
+    };
+
+    // Campaign attribution decides who gets invoiced, so it cannot be taken on
+    // the device's word. A play may only be credited to a campaign that actually
+    // holds a slot booking at this device's store (or is the store's house
+    // filler). Anything else still gets recorded as a play — the screen did show
+    // something — but with no campaign attached, so a compromised or modified
+    // player cannot inflate an advertiser's bill or forge another brand's
+    // proof-of-play.
+    const claimedCampaignIds = [...new Set(
+      batch.map((e) => e.campaignId).filter((c): c is string => typeof c === 'string' && !!c),
+    )];
+    let attributable = new Set<string>();
+    if (claimedCampaignIds.length && device.storeId) {
+      const [booked, store] = await Promise.all([
+        db.slotBooking.findMany({
+          where:  { storeId: device.storeId, campaignId: { in: claimedCampaignIds } },
+          select: { campaignId: true },
+          distinct: ['campaignId'],
+        }).catch(() => []),
+        db.store.findUnique({
+          where: { id: device.storeId }, select: { fillerCampaignId: true },
+        }).catch(() => null),
+      ]);
+      attributable = new Set(booked.map((b) => b.campaignId));
+      if (store?.fillerCampaignId) attributable.add(store.fillerCampaignId);
+    }
 
     // Fetch the last event for this device to chain hashes
     const lastEvent = await db.playEvent.findFirst({
@@ -223,11 +278,16 @@ export async function POST(req: NextRequest) {
     // So find the ids we already hold, in ONE query per batch, and skip them entirely.
     // Skipping is safe for the hash chain too: an event that is already stored was
     // chained when it was first accepted, and re-chaining it here would rewrite history.
+    //
+    // Scoped to this device: PlayEvent.id is client-supplied, so a global lookup
+    // answers "does any device hold this id?" — an existence oracle across the
+    // whole fleet, and a way for one device to have another's ids silently
+    // treated as already-stored.
     const batchIds = batch.map((e) => e.id).filter((id): id is string => !!id);
     const alreadyStored = new Set(
       batchIds.length
         ? (await db.playEvent.findMany({
-            where:  { id: { in: batchIds } },
+            where:  { id: { in: batchIds }, deviceId: device.id },
             select: { id: true },
           }).catch(() => [])).map((r) => r.id)
         : [],
@@ -236,6 +296,10 @@ export async function POST(req: NextRequest) {
     for (const ev of batch) {
       if (!ev.id || !ev.mediaId || !ev.startedAt || !ev.endedAt) continue;
       if (alreadyStored.has(ev.id)) { duplicates++; continue; }
+      if (!plausible(ev)) continue;
+      // Drop an attribution this device is not entitled to make; keep the play.
+      const attributedCampaignId =
+        ev.campaignId && attributable.has(ev.campaignId) ? ev.campaignId : null;
       try {
         const rowHash = computeRowHash(
           ev.id, device.id, ev.mediaId,
@@ -251,7 +315,7 @@ export async function POST(req: NextRequest) {
             deviceId:   device.id,
             mediaId:    ev.mediaId,
             layoutId:   ev.scheduleId ?? null,
-            campaignId: ev.campaignId ?? null,
+            campaignId: attributedCampaignId,
             tag:        ev.tag        ?? null,
             startedAt:  new Date(ev.startedAt),
             endedAt:    new Date(ev.endedAt),
@@ -274,12 +338,12 @@ export async function POST(req: NextRequest) {
             hour,
             playCount:   1,
             totalMs:     created.durationMs,
-            campaignIds: ev.campaignId ? [ev.campaignId] : [],
+            campaignIds: attributedCampaignId ? [attributedCampaignId] : [],
           },
           update: {
             playCount: { increment: 1 },
             totalMs:   { increment: created.durationMs },
-            ...(ev.campaignId ? { campaignIds: { push: ev.campaignId } } : {}),
+            ...(attributedCampaignId ? { campaignIds: { push: attributedCampaignId } } : {}),
             updatedAt: new Date(),
           },
         });
