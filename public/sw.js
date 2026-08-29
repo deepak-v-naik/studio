@@ -159,11 +159,13 @@ self.addEventListener('push', (e) => {
   const title = data.title || 'ALIVE';
   const options = {
     body: data.body || '',
-    // Matches src/app/manifest.ts. NOTE: public/icons/ currently holds only a
-    // README — until those PNGs are generated the browser falls back to its
-    // default icon (the notification still shows).
+    // icon is drawn as-is (white field, red ALIVE dot). badge is a SEPARATE
+    // asset on purpose: Android alpha-masks the badge to a silhouette, so the
+    // icon's white background would mask to a solid blob — badge-96 is a white
+    // glyph on transparent, which masks correctly. Both from public/icons/,
+    // regenerate with scripts/generate-icons.mjs.
     icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
+    badge: '/icons/badge-96.png',
     tag: data.tag || 'alive-alert',
     renotify: true,
     data: { url: data.url || '/store-dashboard' },
